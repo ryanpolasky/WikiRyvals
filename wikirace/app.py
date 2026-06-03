@@ -27,7 +27,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocke
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .accounts import ACCOUNTS_PATH, AccountError, AccountStore, RateLimitError
+from .accounts import ACCOUNTS_PATH, REVIEW_EMAIL, AccountError, AccountStore, RateLimitError
 from .graph import induced_adjacency, shortest_hops, shortest_hops_via
 from .glicko2 import Rating, rate_1v1
 from .duos import DuoMatchMaker, _team_best
@@ -514,6 +514,9 @@ def _send_login_code(email: str, code: str) -> bool:
     With no SMTP host configured we run in dev mode: log the code and let the
     caller surface it to the client so the flow works without a mail server.
     """
+    # Store-review account has no real inbox and uses a fixed code, so never mail.
+    if (email or "").strip().lower() == REVIEW_EMAIL:
+        return False
     host = os.environ.get("WIKIRYVALS_SMTP_HOST")
     if not host:
         print(f"[WikiRyvals dev-auth] login code for {email}: {code}")

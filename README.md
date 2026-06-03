@@ -103,43 +103,43 @@ links on pages the player actually walked through, so it works on any race.
 
 ### Backend - `wikirace/` (FastAPI)
 
-| File | Role |
-|---|---|
-| `wiki.py` | Fetch + sanitize Wikipedia article HTML; extract the internal-link set. Single source of truth for "what's a valid link." |
-| `snapshot_store.py` | Loads the frozen snapshot; lazily fetches + caches any article a player clicks into so play isn't limited to the snapshot. |
-| `graph.py` | BFS, merged-graph shortest path, in-degrees, difficulty bucketing. |
-| `play_graph.py` | SQLite adjacency graph grown incrementally from real play (self-healing, "latest observation wins"); powers par + missed-win without crawling the API. |
-| `glicko2.py` | Glicko-2 rating math (rating/RD/volatility, expected score, season soft-reset). |
-| `ranks.py` | The EP ladder (Iron -> Ryval, divisions + apex) and variable EP on top of Glicko-2. |
-| `accounts.py` | SQLite accounts: passwordless email login, sessions, ratings, match history, dailies/weeklies, seasons, friends. |
-| `matchmaking.py` | In-memory 1v1 ranked queue, async ghost fallback, and code-based private lobbies. |
-| `duos.py` | 2v2 ranked queue + matches (parallel to `matchmaking`), balanced teams, shared team EP. |
-| `realtime.py` | WebSocket pub/sub hub keyed by match id (live opponent progress + instant resolution). |
-| `admin.py` | Helpers behind the gated `/api/ext/admin/*` routes (account search, tagging, season rollover). |
-| `app.py` | The FastAPI app: wires every `/api/ext/*` route + WebSockets, server-authoritative hop validation, par, and result/rating finalization. |
+| File                | Role                                                                                                                                                   |
+|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `wiki.py`           | Fetch + sanitize Wikipedia article HTML; extract the internal-link set. Single source of truth for "what's a valid link."                              |
+| `snapshot_store.py` | Loads the frozen snapshot; lazily fetches + caches any article a player clicks into so play isn't limited to the snapshot.                             |
+| `graph.py`          | BFS, merged-graph shortest path, in-degrees, difficulty bucketing.                                                                                     |
+| `play_graph.py`     | SQLite adjacency graph grown incrementally from real play (self-healing, "latest observation wins"); powers par + missed-win without crawling the API. |
+| `glicko2.py`        | Glicko-2 rating math (rating/RD/volatility, expected score, season soft-reset).                                                                        |
+| `ranks.py`          | The EP ladder (Iron -> Ryval, divisions + apex) and variable EP on top of Glicko-2.                                                                    |
+| `accounts.py`       | SQLite accounts: passwordless email login, sessions, ratings, match history, dailies/weeklies, seasons, friends.                                       |
+| `matchmaking.py`    | In-memory 1v1 ranked queue, async ghost fallback, and code-based private lobbies.                                                                      |
+| `duos.py`           | 2v2 ranked queue + matches (parallel to `matchmaking`), balanced teams, shared team EP.                                                                |
+| `realtime.py`       | WebSocket pub/sub hub keyed by match id (live opponent progress + instant resolution).                                                                 |
+| `admin.py`          | Helpers behind the gated `/api/ext/admin/*` routes (account search, tagging, season rollover).                                                         |
+| `app.py`            | The FastAPI app: wires every `/api/ext/*` route + WebSockets, server-authoritative hop validation, par, and result/rating finalization.                |
 
 ### Snapshot pipeline - `snapshot/`
 
-| File | Role |
-|---|---|
-| `build_snapshot.py` | BFS-crawl the MediaWiki API from seed articles into a bounded, frozen snapshot (graph + cached HTML). |
-| `generate_prompts.py` | BFS shortest-paths over the snapshot -> difficulty-bucketed (easy/medium/hard) race prompts. |
-| `seeds.py` | High-in-degree, well-connected seed articles for the crawl. |
-| `make_icons.py` / `gen_division_icons.py` | Generate the WR logo PNGs + rank/division SVG emblems. |
+| File                                      | Role                                                                                                  |
+|-------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `build_snapshot.py`                       | BFS-crawl the MediaWiki API from seed articles into a bounded, frozen snapshot (graph + cached HTML). |
+| `generate_prompts.py`                     | BFS shortest-paths over the snapshot -> difficulty-bucketed (easy/medium/hard) race prompts.          |
+| `seeds.py`                                | High-in-degree, well-connected seed articles for the crawl.                                           |
+| `make_icons.py` / `gen_division_icons.py` | Generate the WR logo PNGs + rank/division SVG emblems.                                                |
 
 ### Chrome extension - `extension/` (MV3)
 
-| File | Role |
-|---|---|
-| `manifest.json` | MV3 manifest - content script on `*://en.wikipedia.org/wiki/*`, service worker, side panel, storage + host permissions. |
-| `config.js` | Single source of truth for the backend origin (change one line for production). |
-| `background.js` | Service worker: the single network/authority layer. Opens the side panel, calls the backend, persists race state, navigates/creates tabs. |
-| `content.js` / `content.css` | Injects the HUD, tracks link clicks + URL changes, reports hops, renders the finish overlay, neutralizes search + Ctrl+F mid-race, and hides donation banners. |
+| File                                    | Role                                                                                                                                                            |
+|-----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `manifest.json`                         | MV3 manifest - content script on `*://en.wikipedia.org/wiki/*`, service worker, side panel, storage + host permissions.                                         |
+| `config.js`                             | Single source of truth for the backend origin (change one line for production).                                                                                 |
+| `background.js`                         | Service worker: the single network/authority layer. Opens the side panel, calls the backend, persists race state, navigates/creates tabs.                       |
+| `content.js` / `content.css`            | Injects the HUD, tracks link clicks + URL changes, reports hops, renders the finish overlay, neutralizes search + Ctrl+F mid-race, and hides donation banners.  |
 | `lobby.html` / `lobby.css` / `lobby.js` | The side-panel lobby - Play (Ranked 1v1 / Quick / Daily / Custom / Duos), Friends, Rooms, Board, History, Profile, plus match-found and ranked-results screens. |
-| `watch.html` / `watch.js` | Standalone read-only watch-party page - spectate a match live over the spectate WebSocket. |
-| `admin.html` / `admin.js` | Admin dashboard (account search, tagging, season rollover) for `is_admin` accounts. |
-| `fonts/` | Bundled **Linux Libertine** serif (Wikipedia's wordmark font, SIL OFL - `OFL.txt` included), subsetted to woff2 for the WikiRyvals wordmark. |
-| `icons/` | Toolbar/manifest PNGs + the 9 rank emblems + division icons. |
+| `watch.html` / `watch.js`               | Standalone read-only watch-party page - spectate a match live over the spectate WebSocket.                                                                      |
+| `admin.html` / `admin.js`               | Admin dashboard (account search, tagging, season rollover) for `is_admin` accounts.                                                                             |
+| `fonts/`                                | Bundled **Linux Libertine** serif (Wikipedia's wordmark font, SIL OFL - `OFL.txt` included), subsetted to woff2 for the WikiRyvals wordmark.                    |
+| `icons/`                                | Toolbar/manifest PNGs + the 9 rank emblems + division icons.                                                                                                    |
 
 ### Other
 
@@ -200,14 +200,14 @@ baked in. Full details, reverse-proxy/WebSocket notes, and the scaling caveat ar
 
 ## Configuration (environment variables)
 
-| Var | Default | Notes |
-|---|---|---|
-| `WIKIRYVALS_PORT` | `8011` | Host port published by compose. Drop if proxying. |
-| `WIKIRYVALS_ACCOUNTS` | `data/accounts.sqlite3` (`/app/pgdata/...` in Docker) | Accounts/sessions/matches DB. |
-| `WIKIRYVALS_PLAY_GRAPH` | `data/play_graph.sqlite3` (`/app/pgdata/...` in Docker) | Self-growing play graph. |
-| `WIKIRYVALS_SMTP_HOST` | _(empty)_ | **Empty = dev-auth mode** (login code returned in the API response + logged). **Set it in production** to email codes and disable the dev leak. |
-| `WIKIRYVALS_SMTP_PORT` / `_USER` / `_PASS` / `_FROM` | `587` / empty / empty / `noreply@wikiryvals.com` | SMTP delivery for login codes. |
-| `WIKIRYVALS_ADMIN_TOKEN` | _(unset)_ | Gates the admin endpoints (account tagging, season rollover). |
+| Var                                                  | Default                                                 | Notes                                                                                                                                           |
+|------------------------------------------------------|---------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+| `WIKIRYVALS_PORT`                                    | `8011`                                                  | Host port published by compose. Drop if proxying.                                                                                               |
+| `WIKIRYVALS_ACCOUNTS`                                | `data/accounts.sqlite3` (`/app/pgdata/...` in Docker)   | Accounts/sessions/matches DB.                                                                                                                   |
+| `WIKIRYVALS_PLAY_GRAPH`                              | `data/play_graph.sqlite3` (`/app/pgdata/...` in Docker) | Self-growing play graph.                                                                                                                        |
+| `WIKIRYVALS_SMTP_HOST`                               | _(empty)_                                               | **Empty = dev-auth mode** (login code returned in the API response + logged). **Set it in production** to email codes and disable the dev leak. |
+| `WIKIRYVALS_SMTP_PORT` / `_USER` / `_PASS` / `_FROM` | `587` / empty / empty / `noreply@wikiryvals.com`        | SMTP delivery for login codes.                                                                                                                  |
+| `WIKIRYVALS_ADMIN_TOKEN`                             | _(unset)_                                               | Gates the admin endpoints (account tagging, season rollover).                                                                                   |
 
 To point the extension at a deployed backend, change the one line in
 `extension/config.js` and the matching `host_permissions` entry in

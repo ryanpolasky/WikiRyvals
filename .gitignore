@@ -19,6 +19,10 @@ __pycache__/
 /data/accounts.sqlite3-wal
 /data/accounts.sqlite3-shm
 
+# Chrome Web Store listing assets (promo tiles + screenshots) and their generator.
+# Regenerable via store-assets/render.ps1 and uploaded to the store by hand.
+/store-assets/
+
 # Personal ramblings of what I wanna build next :)
 /docs
 

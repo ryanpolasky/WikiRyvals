@@ -44,6 +44,13 @@ SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 VALID_REGIONS = {"NA", "SA", "EU", "MEA", "APAC", "OCE", "Other"}
 
+# Chrome Web Store review login: a fixed, well-known credential so reviewers can
+# sign in without a real inbox. This single email skips code delivery and always
+# verifies with REVIEW_CODE; every other address uses the normal emailed-code
+# flow. Rotate/override via env if ever needed.
+REVIEW_EMAIL = os.environ.get("WIKIRYVALS_REVIEW_EMAIL", "test@googlechromestore.com").strip().lower()
+REVIEW_CODE = os.environ.get("WIKIRYVALS_REVIEW_CODE", "451320").strip()
+
 
 def _hash_code(email: str, code: str) -> str:
     return hashlib.sha256(f"{email.lower()}:{code}".encode("utf-8")).hexdigest()
@@ -348,6 +355,10 @@ class AccountStore:
         """Create (or replace) a 6-digit login code for ``email`` and return it.
         Caller is responsible for delivery (email in prod, dev surfacing locally)."""
         email = _norm_email(email)
+        # Store-review account: hand back the fixed code without storing or
+        # rate-limiting anything (it has no real inbox to mail).
+        if email == REVIEW_EMAIL:
+            return REVIEW_CODE
         if not email or "@" not in email:
             raise AccountError("Enter a valid email address.")
         code = f"{secrets.randbelow(1_000_000):06d}"
@@ -388,6 +399,24 @@ class AccountStore:
             self._conn.commit()
         return code
 
+    def _ensure_user_locked(self, email: str):
+        """Return the existing user row for ``email`` or create a fresh one (with a
+        NULL username, so the caller prompts for one). Caller holds the lock."""
+        user = self._conn.execute(
+            "SELECT * FROM users WHERE email=?", (email,)
+        ).fetchone()
+        if user is None:
+            uid = uuid.uuid4().hex
+            self._conn.execute(
+                "INSERT INTO users (id, email, username, region, created_at, "
+                "rating, rd, vol) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?)",
+                (uid, email, time.time(), DEFAULT_RATING, DEFAULT_RD, DEFAULT_VOL),
+            )
+            user = self._conn.execute(
+                "SELECT * FROM users WHERE id=?", (uid,)
+            ).fetchone()
+        return user
+
     def verify_login_code(self, email: str, code: str) -> dict:
         """Verify a code and return the (created-or-existing) user as a dict.
 
@@ -396,6 +425,16 @@ class AccountStore:
         """
         email = _norm_email(email)
         code = (code or "").strip()
+        # Store-review account: accept the fixed code directly, bypassing the
+        # emailed-code table. Scoped to this one address; all others fall through
+        # to the normal verification below.
+        if email == REVIEW_EMAIL:
+            if code != REVIEW_CODE:
+                raise AccountError("Incorrect code.")
+            with self._lock:
+                user = self._ensure_user_locked(email)
+                self._conn.commit()
+            return self._user_dict(user)
         with self._lock:
             row = self._conn.execute(
                 "SELECT code_hash, expires_at, attempts FROM login_codes WHERE email=?",
@@ -419,19 +458,7 @@ class AccountStore:
                 raise AccountError("Incorrect code.")
             # Success: burn the code, create the user if new.
             self._conn.execute("DELETE FROM login_codes WHERE email=?", (email,))
-            user = self._conn.execute(
-                "SELECT * FROM users WHERE email=?", (email,)
-            ).fetchone()
-            if user is None:
-                uid = uuid.uuid4().hex
-                self._conn.execute(
-                    "INSERT INTO users (id, email, username, region, created_at, "
-                    "rating, rd, vol) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?)",
-                    (uid, email, time.time(), DEFAULT_RATING, DEFAULT_RD, DEFAULT_VOL),
-                )
-                user = self._conn.execute(
-                    "SELECT * FROM users WHERE id=?", (uid,)
-                ).fetchone()
+            user = self._ensure_user_locked(email)
             self._conn.commit()
         return self._user_dict(user)
 
