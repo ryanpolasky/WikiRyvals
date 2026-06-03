@@ -9,8 +9,8 @@ Run it against the accounts DB, e.g. inside the container:
     docker exec -it wikiryvals python -m wikirace.admin list-admins
 
 Commands also accept a username instead of an email. Use --db to point at a
-non-default accounts.sqlite3 (defaults to $WIKIRYVALS_ACCOUNTS_PATH or the
-built-in data path).
+non-default accounts.sqlite3 (defaults to $WIKIRYVALS_ACCOUNTS - the same var the
+server uses - then the legacy $WIKIRYVALS_ACCOUNTS_PATH, then the built-in path).
 """
 
 from __future__ import annotations
@@ -38,7 +38,12 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="wikirace.admin", description="WikiRyvals admin tools")
     parser.add_argument(
-        "--db", default=os.environ.get("WIKIRYVALS_ACCOUNTS_PATH", str(ACCOUNTS_PATH)),
+        "--db",
+        # Match the var the server reads (WIKIRYVALS_ACCOUNTS) so the CLI hits the
+        # same DB; fall back to the legacy name, then the built-in data path.
+        default=(os.environ.get("WIKIRYVALS_ACCOUNTS")
+                 or os.environ.get("WIKIRYVALS_ACCOUNTS_PATH")
+                 or str(ACCOUNTS_PATH)),
         help="path to accounts.sqlite3")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
