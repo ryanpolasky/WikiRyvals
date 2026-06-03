@@ -499,7 +499,7 @@ def _send_login_code(email: str, code: str) -> bool:
 
     msg = EmailMessage()
     msg["Subject"] = "Your WikiRyvals login code"
-    msg["From"] = os.environ.get("WIKIRYVALS_SMTP_FROM", "no-reply@wikiryvals.com")
+    msg["From"] = os.environ.get("WIKIRYVALS_SMTP_FROM", "noreply@wikiryvals.com")
     msg["To"] = email
     msg.set_content(f"Your WikiRyvals login code is: {code}\n\nIt expires in 10 minutes.")
     port = int(os.environ.get("WIKIRYVALS_SMTP_PORT", "587"))

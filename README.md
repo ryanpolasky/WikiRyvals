@@ -206,7 +206,7 @@ baked in. Full details, reverse-proxy/WebSocket notes, and the scaling caveat ar
 | `WIKIRYVALS_ACCOUNTS` | `data/accounts.sqlite3` (`/app/pgdata/...` in Docker) | Accounts/sessions/matches DB. |
 | `WIKIRYVALS_PLAY_GRAPH` | `data/play_graph.sqlite3` (`/app/pgdata/...` in Docker) | Self-growing play graph. |
 | `WIKIRYVALS_SMTP_HOST` | _(empty)_ | **Empty = dev-auth mode** (login code returned in the API response + logged). **Set it in production** to email codes and disable the dev leak. |
-| `WIKIRYVALS_SMTP_PORT` / `_USER` / `_PASS` / `_FROM` | `587` / empty / empty / `no-reply@wikiryvals.com` | SMTP delivery for login codes. |
+| `WIKIRYVALS_SMTP_PORT` / `_USER` / `_PASS` / `_FROM` | `587` / empty / empty / `noreply@wikiryvals.com` | SMTP delivery for login codes. |
 | `WIKIRYVALS_ADMIN_TOKEN` | _(unset)_ | Gates the admin endpoints (account tagging, season rollover). |
 
 To point the extension at a deployed backend, change the one line in
