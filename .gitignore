@@ -19,6 +19,9 @@ __pycache__/
 /data/accounts.sqlite3-wal
 /data/accounts.sqlite3-shm
 
+# Personal ramblings of what I wanna build next :)
+/docs
+
 # Editor / OS
 .DS_Store
 .idea/

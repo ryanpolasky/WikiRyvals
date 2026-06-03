@@ -25,7 +25,7 @@ services:
       - WIKIRYVALS_SMTP_PORT=${WIKIRYVALS_SMTP_PORT:-587}
       - WIKIRYVALS_SMTP_USER=${WIKIRYVALS_SMTP_USER:-}
       - WIKIRYVALS_SMTP_PASS=${WIKIRYVALS_SMTP_PASS:-}
-      - WIKIRYVALS_SMTP_FROM=${WIKIRYVALS_SMTP_FROM:-no-reply@wikiryvals.com}
+      - WIKIRYVALS_SMTP_FROM=${WIKIRYVALS_SMTP_FROM:-noreply@wikiryvals.com}
     volumes:
       - wikiryvals_pgdata:/app/pgdata
     restart: unless-stopped

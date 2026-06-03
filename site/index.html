@@ -140,6 +140,8 @@
   }
   .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
   .brand .mark { font-size: 26px; }
+  .brand a.mark { color: var(--text); }
+  .brand a.mark:hover { text-decoration: none; }
   .brand .sub { color: var(--muted); font-size: 12.5px; font-style: italic; }
   .theme-toggle {
     flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
@@ -160,6 +162,7 @@
     padding: 7px 12px 6px; color: var(--link); border: 1px solid transparent;
     border-bottom: none; cursor: default;
   }
+  .tabs a.tab { cursor: pointer; }
   .tabs .tab.active {
     color: var(--text); background: var(--content-bg);
     border-color: var(--line); border-radius: 2px 2px 0 0;
@@ -272,7 +275,7 @@
 
 <header class="topbar">
   <div class="brand">
-    <span class="wordmark mark">Wiki<span class="ry">Ry</span>vals</span>
+    <a class="wordmark mark" href="/">Wiki<span class="ry">Ry</span>vals</a>
     <span class="sub">The Free Ranked Wikiracing</span>
   </div>
   <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
@@ -285,8 +288,8 @@
   </div>
   <div class="grp">
     <span class="tab active">Read</span>
-    <span class="tab">Install</span>
-    <span class="tab">View history</span>
+    <a class="tab" href="#install">Install</a>
+    <a class="tab" href="/privacy.html">Privacy</a>
   </div>
 </nav>
 
@@ -389,7 +392,7 @@
     <span class="label">Categories</span>: <a href="#">Wikiracing</a> | <a href="#">Browser games</a> | <a href="#">Google Chrome extensions</a> | <a href="#">Competitive games</a> | <a href="#">Fan-made software</a>
   </div>
 
-  <p class="disclaimer">A fan-made competitive layer for Wikiracing. <b>Not affiliated with, endorsed by, or sponsored by the Wikimedia Foundation or Wikipedia.</b> Wikipedia content is available under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a>; the wordmark is set in Linux Libertine (SIL OFL). Gameplay happens on real Wikipedia in your own browser; article content is not re-hosted.</p>
+  <p class="disclaimer">A fan-made competitive layer for Wikiracing. <b>Not affiliated with, endorsed by, or sponsored by the Wikimedia Foundation or Wikipedia.</b> Wikipedia content is available under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a>; the wordmark is set in Linux Libertine (SIL OFL). Gameplay happens on real Wikipedia in your own browser; article content is not re-hosted. Read the <a href="/privacy.html">Privacy Policy</a>.</p>
 </main>
 
 <script>

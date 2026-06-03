@@ -248,10 +248,8 @@ Everything is under `/api/ext/`:
 
 - [`docs/SPEC.md`](docs/SPEC.md) - the v0 product + architecture spec.
 - [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md) - roadmap + what's shipped.
-- [`docs/PHASE1-AUDIT.md`](docs/PHASE1-AUDIT.md) - the ranked/accounts feature audit.
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) - deployment, env vars, proxy/WS, scaling.
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) / [`docs/STORE-LISTING.md`](docs/STORE-LISTING.md) - Chrome Web Store materials.
-- Feature notes + test reports: `TIER1-NOTES.md`, `TIER2-NOTES.md`, `DUOS-NOTES.md`, `FRIENDS-NOTES.md`, and the `*-TEST-REPORT.md` files.
 
 ## Notes / tradeoffs
 

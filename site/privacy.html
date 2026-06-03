@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy - WikiRyvals</title>
+<meta name="description" content="WikiRyvals privacy policy: what we collect (email, username, gameplay results), how we keep ranked matches fair, and your choices. No ads, no third-party analytics, no data selling." />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#2a4bd0" />
+<link rel="canonical" href="https://wikiryvals.com/privacy.html" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="/wr-128.png" sizes="128x128" type="image/png" />
+<link rel="apple-touch-icon" href="/wr-128.png" />
+
+<!-- Open Graph -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="WikiRyvals" />
+<meta property="og:title" content="WikiRyvals Privacy Policy" />
+<meta property="og:description" content="What WikiRyvals collects, why, and your choices. No ads, no third-party analytics, no data selling." />
+<meta property="og:url" content="https://wikiryvals.com/privacy.html" />
+<meta property="og:image" content="https://wikiryvals.com/og.webp" />
+<meta property="og:image:type" content="image/webp" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="WikiRyvals - ranked Wikipedia racing" />
+
+<!-- Twitter / X card -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="WikiRyvals Privacy Policy" />
+<meta name="twitter:description" content="What WikiRyvals collects, why, and your choices. No ads, no third-party analytics, no data selling." />
+<meta name="twitter:image" content="https://wikiryvals.com/og.webp" />
+
+<style>
+  :root {
+    /* Dark theme (Wikipedia-dark flavored) */
+    --bg: #0c0e10; --content-bg: #15181c; --surface: #202428; --th-bg: #24282d;
+    --text: #eaecf0; --muted: #a2a9b1; --soft: #c8ccd1;
+    --link: #6699ff; --link-hover: #88b0ff; --visited: #b58cff; --red: #ff6e6e;
+    --line: #3a4046; --heading-line: #54595d; --code-bg: #202428;
+    --tab-bg: #181b1f;
+  }
+  body.light {
+    /* Light theme (Wikipedia Vector flavored) */
+    --bg: #f3f4f6; --content-bg: #ffffff; --surface: #f8f9fa; --th-bg: #eaecf0;
+    --text: #202122; --muted: #54595d; --soft: #202122;
+    --link: #3366cc; --link-hover: #2a4b8d; --visited: #795cb2; --red: #ba0000;
+    --line: #c8ccd1; --heading-line: #a2a9b1; --code-bg: #f8f9fa;
+    --tab-bg: #f8f9fa;
+  }
+  @font-face {
+    font-family: "WikiRyvals Libertine";
+    src: url("fonts/LinLibertine_R.woff2") format("woff2");
+    font-weight: 400; font-style: normal; font-display: swap;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--text); background: var(--bg);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; color: var(--link-hover); }
+  a:visited { color: var(--visited); }
+  code {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 2px; padding: 1px 5px; font-size: 90%;
+  }
+
+  /* Serif wordmark, like the Wikipedia logotype */
+  .wordmark {
+    font-family: "WikiRyvals Libertine", Georgia, "Times New Roman", serif;
+    font-weight: 400; letter-spacing: .2px;
+  }
+  .ry { color: var(--link); }
+  a:visited .ry { color: var(--link); }
+
+  /* Top header bar */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: var(--content-bg);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  .brand .mark { font-size: 26px; }
+  .brand a.mark { color: var(--text); }
+  .brand a.mark:hover { text-decoration: none; }
+  .brand .sub { color: var(--muted); font-size: 12.5px; font-style: italic; }
+  .theme-toggle {
+    flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
+    display: inline-grid; place-items: center; font-size: 14px; line-height: 1;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--line); border-radius: 2px; cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--muted); }
+
+  /* Faux Vector tab row */
+  .tabs {
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
+    padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--bg);
+    font-size: 12.5px;
+  }
+  .tabs .grp { display: flex; }
+  .tabs .tab {
+    padding: 7px 12px 6px; color: var(--link); border: 1px solid transparent;
+    border-bottom: none; cursor: default;
+  }
+  .tabs a.tab { cursor: pointer; }
+  .tabs .tab.active {
+    color: var(--text); background: var(--content-bg);
+    border-color: var(--line); border-radius: 2px 2px 0 0;
+    position: relative; top: 1px;
+  }
+
+  /* Article body */
+  .content {
+    max-width: 1000px; margin: 0 auto; padding: 18px 26px 40px;
+    background: var(--content-bg); border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line); min-height: 60vh;
+  }
+  h1.title {
+    font-family: "WikiRyvals Libertine", Georgia, serif; font-weight: 400;
+    font-size: 30px; line-height: 1.25; margin: 6px 0 2px;
+    border-bottom: 1px solid var(--heading-line); padding-bottom: 6px;
+  }
+  .siteSub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .hatnote {
+    font-style: italic; color: var(--soft); font-size: 14px;
+    margin: 0 0 6px; padding-left: 1.6em;
+  }
+  h2 {
+    font-family: "WikiRyvals Libertine", Georgia, serif; font-weight: 400;
+    font-size: 23px; margin: 26px 0 8px;
+    border-bottom: 1px solid var(--heading-line); padding-bottom: 5px;
+  }
+  h3 { font-family: "WikiRyvals Libertine", Georgia, serif; font-weight: 400; font-size: 17px; margin: 16px 0 2px; }
+  p { margin: 10px 0; }
+  .content ul, .content ol { margin: 10px 0; padding-left: 28px; }
+  .content li { margin: 5px 0; }
+  b, strong { font-weight: 700; }
+
+  /* Plain-English callout ("the short version") */
+  .note {
+    margin: 14px 0; padding: 12px 16px; font-size: 14px;
+    border: 1px solid var(--line); border-left: 4px solid var(--link);
+    background: var(--surface);
+  }
+  .note .lead-in { font-weight: 700; }
+
+  /* Contents (TOC) box */
+  .toc {
+    display: table; margin: 16px 0; padding: 10px 16px 12px;
+    border: 1px solid var(--line); background: var(--surface); font-size: 14px;
+  }
+  .toc .toc-title { font-weight: 700; text-align: center; margin-bottom: 6px; }
+  .toc ol { margin: 0; padding-left: 18px; }
+  .toc li { margin: 3px 0; }
+
+  .lead-in { font-weight: 700; }
+
+  /* Categories footer */
+  .catlinks {
+    margin-top: 30px; padding: 10px 12px; border: 1px solid var(--line);
+    background: var(--surface); font-size: 13px;
+  }
+  .catlinks .label { font-weight: 700; }
+  .disclaimer { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+
+  @media (max-width: 760px) {
+    .content { padding: 16px 16px 32px; }
+    .brand .sub { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <a class="wordmark mark" href="/">Wiki<span class="ry">Ry</span>vals</a>
+    <span class="sub">The Free Ranked Wikiracing</span>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
+</header>
+
+<nav class="tabs">
+  <div class="grp">
+    <span class="tab active">Article</span>
+    <span class="tab">Talk</span>
+  </div>
+  <div class="grp">
+    <span class="tab active">Read</span>
+    <a class="tab" href="/">Home</a>
+    <span class="tab">View history</span>
+  </div>
+</nav>
+
+<main class="content">
+  <h1 class="title">Privacy Policy</h1>
+  <p class="siteSub">From <a href="/">WikiRyvals</a>, the free ranked Wikiracing. Last updated: June 2026.</p>
+
+  <p class="hatnote">This is the privacy policy for <a href="/">WikiRyvals</a>, a fan-made project. It is not affiliated with, endorsed by, or sponsored by the Wikimedia Foundation or Wikipedia.</p>
+
+  <p>WikiRyvals (&ldquo;we&rdquo;, &ldquo;us&rdquo;) is a competitive Wikipedia-racing game delivered as a Chrome extension plus a backend service. This policy explains what we collect, why, and your choices. It is written to be plain-English; if anything is unclear, email us (below).</p>
+
+  <div class="note">
+    <span class="lead-in">The short version:</span> We collect the minimum needed to run accounts and ranked matches - your email (to sign you in), your username, and your gameplay results. While a race is active we check the path you took through Wikipedia to keep matches fair. We do <b>not</b> track your general browsing, we do <b>not</b> use ads or third-party analytics, and we do <b>not</b> sell your data.
+  </div>
+
+  <div class="toc" role="navigation" aria-label="Contents">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#collect">Information we collect</a></li>
+      <li><a href="#local">Data stored locally in your browser</a></li>
+      <li><a href="#use">How we use your information</a></li>
+      <li><a href="#sharing">How your data is shared</a></li>
+      <li><a href="#retention">Data retention and deletion</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#children">Children</a></li>
+      <li><a href="#changes">Changes to this policy</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ol>
+  </div>
+
+  <h2 id="collect">Information we collect</h2>
+
+  <h3>Account information</h3>
+  <ul>
+    <li><b>Email address</b> - used only to send you a one-time login code and to identify your account. Login is passwordless (no password is stored).</li>
+    <li><b>Username</b> and <b>optional region/country</b> - shown on leaderboards and to opponents.</li>
+  </ul>
+
+  <h3>Gameplay information</h3>
+  <ul>
+    <li>Your rating and rank (&ldquo;Edit Points&rdquo;/EP), match history, win/loss records, daily/weekly puzzle results, streaks, friends, and party membership.</li>
+    <li>For each race you play: start and target articles, your completion time, number of clicks, and the sequence of articles you navigated through.</li>
+  </ul>
+
+  <h3>Path data during an active race (anti-cheat)</h3>
+  <ul>
+    <li>While you are in an <b>active race</b>, the extension reports to our server the title of the Wikipedia article you are currently on and the links present on that page. We use this <b>only</b> to verify that each move was a legitimate link click (our anti-cheat) and to compute your route.</li>
+    <li>We do <b>not</b> collect the pages you visit when you are <b>not</b> in a race, and we do not read or transmit your browsing history.</li>
+  </ul>
+
+  <h3>Technical information</h3>
+  <ul>
+    <li>A <b>session token</b> that keeps you logged in (stored locally in your browser - see below), and basic request data (such as IP address) inherent to any web request, used for security and abuse prevention.</li>
+  </ul>
+
+  <h2 id="local">Data stored locally in your browser</h2>
+  <p>The extension uses Chrome's local storage on your device to hold:</p>
+  <ul>
+    <li>your <b>session token</b> (to stay signed in),</li>
+    <li>your <b>light/dark theme preference</b>, and</li>
+    <li>your <b>current race state</b> (so a race survives a page reload).</li>
+  </ul>
+  <p>This data stays on your device and is cleared when you log out or remove the extension.</p>
+
+  <h2 id="use">How we use your information</h2>
+  <ul>
+    <li>To create and operate your account and authenticate you.</li>
+    <li>To run solo races, ranked matchmaking (1v1 and duos), private lobbies, daily and weekly puzzles, leaderboards, friends, and rankings.</li>
+    <li>To keep matches fair (path validation / anti-cheat) and to detect abuse.</li>
+    <li>To maintain and improve the service.</li>
+  </ul>
+  <p>We do <b>not</b> use your data for advertising, and we do <b>not</b> sell or rent it.</p>
+
+  <h2 id="sharing">How your data is shared</h2>
+  <ul>
+    <li><b>Other players:</b> your username, region, rank/EP, and match results are visible to opponents and on leaderboards. Your email is never shown to other players.</li>
+    <li><b>Wikipedia:</b> races take place on <code>en.wikipedia.org</code>. Your interactions with Wikipedia are also subject to the <a href="https://foundation.wikimedia.org/wiki/Policy:Privacy_policy" target="_blank" rel="noopener">Wikimedia Foundation Privacy Policy</a>.</li>
+    <li><b>Email delivery:</b> we use an email/SMTP provider solely to deliver your login codes.</li>
+    <li><b>Legal:</b> we may disclose information if required by law.</li>
+  </ul>
+  <p>We do <b>not</b> use third-party analytics, advertising SDKs, or tracking pixels. The extension communicates only with our backend and with Wikipedia.</p>
+
+  <h2 id="retention">Data retention and deletion</h2>
+  <p>We keep account and gameplay data for as long as your account exists. You can request deletion of your account and associated data at any time by emailing us at the address below; we will delete it (other than anything we must retain for legal or abuse-prevention reasons).</p>
+
+  <h2 id="security">Security</h2>
+  <p>Login is passwordless and session tokens are scoped to your device. In production, traffic is served over HTTPS/WSS. No method of transmission or storage is 100% secure, but we take reasonable measures to protect your information.</p>
+
+  <h2 id="children">Children</h2>
+  <p>WikiRyvals is not directed to children under 13, and we do not knowingly collect their personal information.</p>
+
+  <h2 id="changes">Changes to this policy</h2>
+  <p>We may update this policy; we will revise the &ldquo;Last updated&rdquo; date above and, for material changes, provide a more prominent notice.</p>
+
+  <h2 id="contact">Contact</h2>
+  <p>Questions or deletion requests: <a href="mailto:privacy@mail.wikiryvals.com">privacy@mail.wikiryvals.com</a></p>
+
+  <div class="catlinks">
+    <span class="label">Categories</span>: <a href="/">WikiRyvals</a> | Privacy | Legal
+  </div>
+
+  <p class="disclaimer">A fan-made competitive layer for Wikiracing. <b>Not affiliated with, endorsed by, or sponsored by the Wikimedia Foundation or Wikipedia.</b> Gameplay happens on real Wikipedia in your own browser; article content is not re-hosted.</p>
+</main>
+
+<script>
+  // Light/dark theme: persisted in localStorage; defaults to OS preference.
+  // Shares the "wikiryvals-theme" key with the landing page so the choice carries over.
+  (function () {
+    var KEY = "wikiryvals-theme";
+    var btn = document.getElementById("theme-toggle");
+    function sys() {
+      return window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function apply(theme) {
+      var light = theme === "light";
+      document.body.classList.toggle("light", light);
+      if (btn) btn.textContent = light ? "☀️" : "🌙";
+    }
+    apply(localStorage.getItem(KEY) || sys());
+    if (btn) btn.addEventListener("click", function () {
+      var next = document.body.classList.contains("light") ? "dark" : "light";
+      localStorage.setItem(KEY, next);
+      apply(next);
+    });
+  })();
+</script>
+</body>
+</html>
