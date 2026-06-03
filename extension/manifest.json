@@ -3,7 +3,7 @@
   "name": "WikiRyvals",
   "version": "1.0.0",
   "description": "WikiRyvals - ranked, competitive Wikiracing on live Wikipedia. Find your Ryval.",
-  "permissions": ["storage", "tabs", "webNavigation", "sidePanel"],
+  "permissions": ["storage", "tabs", "sidePanel"],
   "host_permissions": [
     "https://api.wikiryvals.com/*",
     "https://en.wikipedia.org/*"

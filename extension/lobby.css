@@ -482,27 +482,30 @@ body.light .vs-avatar { background: var(--bg-2); color: var(--blue); border-colo
   padding: 2px 6px; border-radius: 999px; color: #fff; border: none;
   background: var(--grad);
 }
-/* Beta Tester: a gently drifting purple-blue-cyan gradient (the tasteful one). */
+/* Both flow seamlessly: the gradient starts AND ends on the same color, and with
+   background-size:200% a 200% position shift scrolls by exactly one tile - so the
+   loop point lands on an identical frame (no jump). Linear timing = constant flow. */
+/* Beta Tester: a calm purple-blue-cyan shimmer (palindrome so it tiles cleanly). */
 .cbadge-beta {
-  background: linear-gradient(120deg, #a06bff, #5b6bff, #00d4ff);
+  background: linear-gradient(90deg, #a06bff, #5b6bff, #00d4ff, #5b6bff, #a06bff);
   background-size: 200% 100%;
-  animation: cbadge-beta-flow 6s ease-in-out infinite;
+  animation: cbadge-beta-flow 7s linear infinite;
 }
 @keyframes cbadge-beta-flow {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+  from { background-position: 0% 50%; }
+  to   { background-position: 200% 50%; }
 }
 /* Creator: the flashy one - a flowing rainbow with a soft glow. */
 .cbadge-creator {
   background: linear-gradient(90deg, #ff5e62, #ff9966, #ffd166, #42e695, #4f9fff, #b06bff, #ff5e62);
-  background-size: 250% 100%;
+  background-size: 200% 100%;
   animation: cbadge-creator-flow 5s linear infinite;
   box-shadow: 0 0 10px rgba(124, 92, 255, .45);
   text-shadow: 0 1px 1px rgba(0, 0, 0, .35);
 }
 @keyframes cbadge-creator-flow {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 250% 50%; }
+  from { background-position: 0% 50%; }
+  to   { background-position: 200% 50%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cbadge-beta, .cbadge-creator { animation: none; }

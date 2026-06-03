@@ -133,28 +133,16 @@ async function reportVisit(title, links) {
   return data;
 }
 
-// Track whether the side panel is open via a presence port the lobby connects on
-// load, so the in-page pull tab can TOGGLE it shut (Chrome has no
-// sidePanel.close(), so the panel closes itself when asked).
-let panelPort = null;
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "rwr-panel") return;
-  panelPort = port;
-  port.onDisconnect.addListener(() => { if (panelPort === port) panelPort = null; });
-});
-
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Open the side panel synchronously, still inside the content script's click
   // gesture - chrome.sidePanel.open() requires a user gesture, so we must not
   // await anything before calling it (that's why this is handled before the
   // async block below).
   if (msg && msg.type === "openSidePanel") {
-    // Already open? Toggle it shut - it closes itself over the presence port.
-    if (panelPort) {
-      try { panelPort.postMessage({ type: "close" }); } catch (_) {}
-      sendResponse({ ok: true });
-      return;
-    }
+    // Stateless toggle (no open-flag for a worker eviction to lose): open() is a
+    // no-op if the panel's already up, and the toggle broadcast is only received
+    // by an *already-open* panel - one that's just opening isn't listening yet -
+    // which then closes itself. open() must stay synchronous (user gesture).
     try {
       if (!(chrome.sidePanel && chrome.sidePanel.open)) {
         throw new Error("sidePanel.open unavailable (needs Chrome 116+)");
@@ -163,7 +151,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const opts = tab && tab.windowId != null
         ? { windowId: tab.windowId }
         : { tabId: tab && tab.id };
-      chrome.sidePanel.open(opts);
+      try { chrome.sidePanel.open(opts); } catch (_) {}
+      chrome.runtime.sendMessage({ type: "rwr-panel-toggle" }, () => void chrome.runtime.lastError);
       sendResponse({ ok: true });
     } catch (e) {
       console.warn("openSidePanel failed", e);

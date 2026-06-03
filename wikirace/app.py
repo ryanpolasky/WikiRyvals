@@ -484,6 +484,30 @@ def _require_admin(token: str | None, authorization: str | None = None) -> dict:
     return user
 
 
+def _email_html(heading: str, body_html: str) -> str:
+    """Branded HTML wrapper for transactional emails. Inline styles only (mail
+    clients ignore <style>/external CSS); the logo is pulled from the site."""
+    return f"""\
+<!doctype html><html><body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#202122;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 12px;">
+  <tr><td align="center">
+    <table role="presentation" width="460" cellpadding="0" cellspacing="0" style="width:460px;max-width:100%;background:#ffffff;border:1px solid #e3e6ea;border-radius:14px;overflow:hidden;">
+      <tr><td style="padding:22px 28px 4px;">
+        <img src="https://wikiryvals.com/wr-128.png" width="44" height="44" alt="" style="vertical-align:middle;border-radius:10px;">
+        <span style="font-size:22px;font-weight:800;vertical-align:middle;margin-left:10px;">Wiki<span style="color:#3366cc;">Ry</span>vals</span>
+      </td></tr>
+      <tr><td style="padding:8px 28px 0;font-size:18px;font-weight:700;">{heading}</td></tr>
+      <tr><td style="padding:10px 28px 24px;font-size:14px;line-height:1.6;color:#3a4046;">{body_html}</td></tr>
+      <tr><td style="padding:16px 28px;background:#f8f9fa;border-top:1px solid #eaecf0;font-size:12px;color:#72777d;">
+        You're receiving this because someone requested it for your WikiRyvals account. If that wasn't you, you can safely ignore this email.
+        <br><a href="https://wikiryvals.com" style="color:#3366cc;text-decoration:none;">wikiryvals.com</a>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
+
+
 def _send_login_code(email: str, code: str) -> bool:
     """Deliver a login code. Returns True if it was actually emailed.
 
@@ -502,6 +526,12 @@ def _send_login_code(email: str, code: str) -> bool:
     msg["From"] = os.environ.get("WIKIRYVALS_SMTP_FROM", "noreply@wikiryvals.com")
     msg["To"] = email
     msg.set_content(f"Your WikiRyvals login code is: {code}\n\nIt expires in 10 minutes.")
+    msg.add_alternative(_email_html(
+        "Your login code",
+        '<p style="margin:0 0 14px;">Use this code to sign in. It expires in 10 minutes.</p>'
+        f'<div style="font-size:30px;font-weight:800;letter-spacing:8px;text-align:center;'
+        f'background:#f3f4f6;border:1px solid #e3e6ea;border-radius:10px;padding:16px 0;color:#202122;">{code}</div>',
+    ), subtype="html")
     port = int(os.environ.get("WIKIRYVALS_SMTP_PORT", "587"))
     user = os.environ.get("WIKIRYVALS_SMTP_USER")
     pw = os.environ.get("WIKIRYVALS_SMTP_PASS")
@@ -642,11 +672,14 @@ def _record_daily_if_due(race: "ExtRace") -> None:
     if not race.daily_date or not race.daily_user:
         return
     try:
-        accounts.record_daily_result(
+        res = accounts.record_daily_result(
             race.daily_date, race.daily_user, race.daily_username,
             start=race.start, target=race.target, clicks=race.clicks,
             time_ms=race.elapsed_ms, flagged=race.flagged, finished=race.finished,
         )
+        # Count the daily once, on the official (first) finish, for season stats.
+        if res.get("recorded") and race.finished:
+            accounts.add_season_stats(race.daily_user, inc={"daily_finished": 1})
     except Exception:
         pass
 
@@ -728,11 +761,14 @@ def _record_weekly_if_due(race: "ExtRace") -> None:
     if not race.weekly_week or not race.weekly_user:
         return
     try:
-        accounts.record_weekly_result(
+        res = accounts.record_weekly_result(
             race.weekly_week, race.weekly_user, race.weekly_username,
             start=race.start, target=race.target, clicks=race.clicks,
             time_ms=race.elapsed_ms, flagged=race.flagged, finished=race.finished,
         )
+        # Count the weekly once, on the official (first) finish, for season stats.
+        if res.get("recorded") and race.finished:
+            accounts.add_season_stats(race.weekly_user, inc={"weekly_finished": 1})
     except Exception:
         pass
 
@@ -811,6 +847,18 @@ def season_list() -> dict:
 @app.get("/api/ext/season/standings")
 def season_standings(id: int, limit: int = 100) -> dict:
     return {"season_id": id, "standings": accounts.season_standings(id, limit)}
+
+
+@app.get("/api/ext/me/season-stats")
+def my_season_stats(season_id: int | None = None, token: str | None = None,
+                    authorization: str | None = Header(default=None)) -> dict:
+    """The signed-in player's stats for one season (the active one by default)
+    plus their full per-season history, newest first, for later analytics."""
+    user = _require_user(token, authorization)
+    return {
+        "current": accounts.season_stats(user["id"], season_id),
+        "history": accounts.user_season_history(user["id"]),
+    }
 
 
 class RolloverReq(BaseModel):
@@ -1059,6 +1107,33 @@ def _build_result(resolution: dict, key: str, *,
         rp_delta=rp_delta, rating_before=pre.rating, rating_after=rating_after,
         rp_before=pre_rp, rp_after=post_rp, flagged=1 if me.flagged else 0,
     )
+
+    # Per-season analytics: tally this competitive result onto the player's
+    # current-season stat row. Best-effort - never let stats break the result.
+    if is_ranked:
+        fmt = "duo" if mode == "ranked_duo" else "ranked"
+        promo = updated.get("_promo") or {}
+        inc = {
+            "games": 1, "wins": int(won), "draws": int(draw),
+            "losses": int(not won and not draw),
+            f"{fmt}_games": 1, f"{fmt}_wins": int(won),
+            f"{fmt}_losses": int(not won and not draw),
+            "rp_gained": max(0, rp_delta), "rp_lost": max(0, -rp_delta),
+            "flags": int(bool(me.flagged)),
+            "clean_wins": int(won and not me.flagged),
+            "total_clicks": me.clicks or 0, "total_time_ms": me.time_ms or 0,
+            "promos_won": int(bool(promo.get("won"))),
+            "promos_lost": int(bool(promo.get("lost"))),
+        }
+        peak = {"peak_rp": post_rp, "peak_rating": round(rating_after, 1)}
+        streak_now = updated.get("streak") or 0
+        if streak_now > 0:
+            peak["best_win_streak"] = streak_now
+        low = {"fastest_win_ms": me.time_ms} if (won and me.time_ms) else None
+        try:
+            accounts.add_season_stats(me.user_id, inc=inc, peak=peak, low=low)
+        except Exception:
+            pass
 
     placed = is_ranked and not updated.get("in_placements", in_placements)
     show_rank = is_ranked and placed

@@ -241,6 +241,43 @@ class AccountStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_standings_season
                     ON season_standings(season_id, position);
+                -- Per-season rolling stats: one row per (season, player), tallied
+                -- live as games resolve and kept forever keyed by season_id (a
+                -- rollover just starts writing to the new season). Lets us draw a
+                -- season history / analytics later; lifetime totals = SUM over rows.
+                CREATE TABLE IF NOT EXISTS user_season_stats (
+                    season_id       INTEGER NOT NULL,
+                    user_id         TEXT NOT NULL,
+                    games           INTEGER NOT NULL DEFAULT 0,
+                    wins            INTEGER NOT NULL DEFAULT 0,
+                    losses          INTEGER NOT NULL DEFAULT 0,
+                    draws           INTEGER NOT NULL DEFAULT 0,
+                    ranked_games    INTEGER NOT NULL DEFAULT 0,
+                    ranked_wins     INTEGER NOT NULL DEFAULT 0,
+                    ranked_losses   INTEGER NOT NULL DEFAULT 0,
+                    duo_games       INTEGER NOT NULL DEFAULT 0,
+                    duo_wins        INTEGER NOT NULL DEFAULT 0,
+                    duo_losses      INTEGER NOT NULL DEFAULT 0,
+                    rp_gained       INTEGER NOT NULL DEFAULT 0,
+                    rp_lost         INTEGER NOT NULL DEFAULT 0,
+                    peak_rp         INTEGER NOT NULL DEFAULT 0,
+                    peak_rating     REAL,
+                    best_win_streak INTEGER NOT NULL DEFAULT 0,
+                    promos_won      INTEGER NOT NULL DEFAULT 0,
+                    promos_lost     INTEGER NOT NULL DEFAULT 0,
+                    flags           INTEGER NOT NULL DEFAULT 0,
+                    clean_wins      INTEGER NOT NULL DEFAULT 0,
+                    fastest_win_ms  INTEGER,
+                    total_clicks    INTEGER NOT NULL DEFAULT 0,
+                    total_time_ms   INTEGER NOT NULL DEFAULT 0,
+                    daily_finished  INTEGER NOT NULL DEFAULT 0,
+                    weekly_finished INTEGER NOT NULL DEFAULT 0,
+                    first_at        REAL,
+                    last_at         REAL,
+                    PRIMARY KEY (season_id, user_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_season_stats_user
+                    ON user_season_stats(user_id, season_id);
                 -- Friends: a directed request (requester -> addressee) that
                 -- becomes a mutual friendship once accepted. Used to party up
                 -- for duos; private 1v1 lobbies stay code-based (no list).
@@ -804,14 +841,14 @@ class AccountStore:
                 "ended_at": row["ended_at"], "status": row["status"]}
 
     def _active_season_locked(self) -> sqlite3.Row:
-        """Return the active season, creating Season 1 on first use. Caller holds the lock."""
+        """Return the active season, creating Season 0 (beta) on first use. Caller holds the lock."""
         row = self._conn.execute(
             "SELECT * FROM seasons WHERE status='active' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if row is None:
             self._conn.execute(
                 "INSERT INTO seasons(label, started_at, status) VALUES (?,?, 'active')",
-                ("Season 1", time.time()),
+                ("Season 0", time.time()),
             )
             self._conn.commit()
             row = self._conn.execute(
@@ -837,6 +874,87 @@ class AccountStore:
         return [{"position": r["position"], "username": r["username"], "rp": r["rp"],
                  "rating": r["rating"], "tier": r["tier"], "reward": r["reward"]}
                 for r in rows]
+
+    # Only these column names may be bumped through add_season_stats - guards the
+    # f-string SQL below against ever interpolating an unexpected identifier.
+    _SEASON_STAT_COLS = frozenset({
+        "games", "wins", "losses", "draws",
+        "ranked_games", "ranked_wins", "ranked_losses",
+        "duo_games", "duo_wins", "duo_losses",
+        "rp_gained", "rp_lost", "peak_rp", "peak_rating", "best_win_streak",
+        "promos_won", "promos_lost", "flags", "clean_wins",
+        "fastest_win_ms", "total_clicks", "total_time_ms",
+        "daily_finished", "weekly_finished",
+    })
+
+    def add_season_stats(self, user_id: str, *, inc: dict | None = None,
+                         peak: dict | None = None, low: dict | None = None,
+                         season_id: int | None = None) -> None:
+        """Roll deltas into a player's current-season stat row (created on first
+        touch). ``inc`` adds, ``peak`` keeps the running max, ``low`` keeps the
+        running min while ignoring NULL (for fastest-finish style fields). Call
+        sites wrap this best-effort so a stats hiccup can never break a result."""
+        inc = {k: v for k, v in (inc or {}).items() if v}
+        peak = {k: v for k, v in (peak or {}).items() if v is not None}
+        low = {k: v for k, v in (low or {}).items() if v is not None}
+        for col in (*inc, *peak, *low):
+            if col not in self._SEASON_STAT_COLS:
+                raise AccountError(f"Unknown season stat column: {col}")
+        if not (inc or peak or low):
+            return
+        now = time.time()
+        with self._lock:
+            sid = season_id if season_id is not None else self._active_season_locked()["id"]
+            self._conn.execute(
+                "INSERT OR IGNORE INTO user_season_stats(season_id, user_id, first_at, last_at) "
+                "VALUES (?,?,?,?)",
+                (sid, user_id, now, now),
+            )
+            sets, args = ["last_at=?"], [now]
+            for col, amt in inc.items():
+                sets.append(f"{col}={col}+?"); args.append(amt)
+            for col, val in peak.items():
+                sets.append(f"{col}=MAX(COALESCE({col},0),?)"); args.append(val)
+            for col, val in low.items():
+                sets.append(f"{col}=CASE WHEN {col} IS NULL THEN ? ELSE MIN({col},?) END")
+                args.extend([val, val])
+            args.extend([sid, user_id])
+            self._conn.execute(
+                f"UPDATE user_season_stats SET {','.join(sets)} "
+                "WHERE season_id=? AND user_id=?",
+                tuple(args),
+            )
+            self._conn.commit()
+
+    def _season_stats_dict(self, row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        d = dict(row)
+        g, w = d.get("games", 0) or 0, d.get("wins", 0) or 0
+        d["win_rate"] = round(w / g, 4) if g else None
+        d["net_rp"] = (d.get("rp_gained", 0) or 0) - (d.get("rp_lost", 0) or 0)
+        return d
+
+    def season_stats(self, user_id: str, season_id: int | None = None) -> dict | None:
+        """A player's stat row for one season (the active season by default)."""
+        with self._lock:
+            sid = season_id if season_id is not None else self._active_season_locked()["id"]
+            row = self._conn.execute(
+                "SELECT * FROM user_season_stats WHERE season_id=? AND user_id=?",
+                (sid, user_id),
+            ).fetchone()
+        return self._season_stats_dict(row)
+
+    def user_season_history(self, user_id: str) -> list[dict]:
+        """Every season's stat row for a player, newest first (for analytics)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT st.*, s.label AS season_label, s.status AS season_status "
+                "FROM user_season_stats st JOIN seasons s ON s.id=st.season_id "
+                "WHERE st.user_id=? ORDER BY st.season_id DESC",
+                (user_id,),
+            ).fetchall()
+        return [self._season_stats_dict(r) for r in rows]
 
     def rollover_season(self, new_label: str) -> dict:
         """End the active season and start a new one. Archives every player's final
@@ -869,6 +987,9 @@ class AccountStore:
                     "placement_games=0, in_promo=0, promo_target_rp=NULL WHERE id=?",
                     (nr.rating, nr.rd, nr.vol, new_rp, r["id"]),
                 )
+            # user_season_stats need no touch here: keyed by season_id, the ended
+            # season's rows stay as permanent history and post-rollover games just
+            # start tallying under the new season's id.
             new = self._conn.execute(
                 "INSERT INTO seasons(label, started_at, status) VALUES (?,?, 'active')",
                 (new_label, now),

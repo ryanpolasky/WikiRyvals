@@ -14,11 +14,16 @@ let TOKEN = null;
 let ME = null;                 // current user dict
 const poll = { ticket: null, result: null, lobby: null }; // interval handles
 
-// Presence port so the in-page pull tab can toggle this panel shut (Chrome has
-// no sidePanel.close(), so we close ourselves when the background asks).
+// The in-page pull tab toggles this panel: the background re-opens it (a no-op if
+// we're already up) and broadcasts a toggle. Only an already-open panel receives
+// it - one that's just opening isn't listening yet - so we close ourselves. No
+// open-state tracking, so a background-worker eviction can't break the toggle.
+// The short grace window guards against catching our own open's broadcast.
+const RWR_PANEL_READY_AT = Date.now() + 400;
 try {
-  const panelPort = chrome.runtime.connect({ name: "rwr-panel" });
-  panelPort.onMessage.addListener((m) => { if (m && m.type === "close") window.close(); });
+  chrome.runtime.onMessage.addListener((m) => {
+    if (m && m.type === "rwr-panel-toggle" && Date.now() > RWR_PANEL_READY_AT) window.close();
+  });
 } catch (_) {}
 
 // ---------------------------------------------------------------- net helpers
@@ -410,8 +415,9 @@ function clearPolls() {
   Object.keys(poll).forEach((k) => { if (poll[k]) { clearInterval(poll[k]); poll[k] = null; } });
 }
 
-$("rk-go").addEventListener("click", () => startQueue($("rk-diff").value));
-$("duo-go").addEventListener("click", () => startQueue($("duo-diff").value, "duo"));
+// Multiplayer is matchmade by skill (SBMM), so difficulty isn't a player choice.
+$("rk-go").addEventListener("click", () => startQueue("any"));
+$("duo-go").addEventListener("click", () => startQueue("any", "duo"));
 
 // Mode of the in-flight queue/match: "ranked" (1v1) or "duo" (2v2).
 let MATCH_FORMAT = "ranked";
@@ -581,7 +587,7 @@ async function addFriend() {
 // ---- party invite (inviter side) -----------------------------------------
 
 async function inviteToDuo(friendId) {
-  const difficulty = $("duo-diff") ? $("duo-diff").value : "any";
+  const difficulty = "any"; // multiplayer doesn't pick difficulty (SBMM)
   try {
     const inv = await api("/api/ext/party/invite", { method: "POST", auth: true, body: { friend_id: friendId, difficulty } });
     enterMatchSearching("duo");
@@ -1059,8 +1065,8 @@ $("rankup-overlay").addEventListener("click", (e) => {
 
 $("result-again").addEventListener("click", () => {
   backToLobby();
-  if (MATCH_FORMAT === "duo") startQueue($("duo-diff").value, "duo");
-  else startQueue($("rk-diff").value);
+  if (MATCH_FORMAT === "duo") startQueue("any", "duo");
+  else startQueue("any");
 });
 $("result-home").addEventListener("click", backToLobby);
 
@@ -1222,7 +1228,7 @@ $("streak-nudge-go").addEventListener("click", () => { showView("play"); startDa
 $("daily-board-toggle").addEventListener("click", toggleDailyBoard);
 $("weekly-go").addEventListener("click", startWeekly);
 $("weekly-board-toggle").addEventListener("click", toggleWeeklyBoard);
-$("rival-rematch").addEventListener("click", () => startQueue($("rk-diff").value));
+$("rival-rematch").addEventListener("click", () => startQueue("any"));
 
 // ---------------------------------------------------------------- ryval
 function fmtAgo(ts) {
@@ -1383,7 +1389,7 @@ function roomsHint(msg, kind) {
 
 $("lobby-create").addEventListener("click", async () => {
   try {
-    const r = await api("/api/ext/lobby/create", { method: "POST", auth: true, body: { difficulty: $("lobby-diff").value } });
+    const r = await api("/api/ext/lobby/create", { method: "POST", auth: true, body: { difficulty: "any" } });
     $("lobby-code-big").textContent = r.code;
     $("lobby-wait").hidden = false;
     roomsHint("");
