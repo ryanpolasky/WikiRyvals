@@ -1,0 +1,21 @@
+.git
+.venv
+**/__pycache__
+*.pyc
+.pytest_cache
+docs
+tests
+# Runtime/generated state (snapshot graph + prompts ARE kept so the image runs
+# offline). The crawled page HTML (data/snapshot/pages) is NOT shipped: the
+# backend serves the graph + prompts only and never reads the page bodies at
+# runtime, so baking them would add tens/hundreds of MB for nothing.
+data/snapshot/pages
+data/runtime_cache
+data/play_graph.json
+data/play_graph.json.tmp
+data/play_graph.sqlite3
+data/play_graph.sqlite3-wal
+data/play_graph.sqlite3-shm
+# Source font (only the subset woff2 ships in the extension; not needed by backend)
+extension/fonts/*.ttf
+*.zip

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="plat rank">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#79e6d6"/>
+      <stop offset="1" stop-color="#2f9d8f"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4 L56 14 L56 34 Q56 52 32 60 Q8 52 8 34 L8 14 Z" fill="#1f7c70"/>
+  <path d="M32 4 L56 14 L56 34 Q56 52 32 60 Q8 52 8 34 L8 14 Z" fill="url(#body)" transform="translate(32 32) scale(0.88) translate(-32 -32)"/>
+  <path d="M32 7 L52 15.5 Q52 17 32 24 Q12 17 12 15.5 Z" fill="#ffffff" opacity="0.16"/>
+</svg>

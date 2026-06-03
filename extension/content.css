@@ -1,0 +1,281 @@
+/* WikiRyvals theme tokens. Dark is the default; `html.rwr-light` flips to light.
+   Names are --rwr-* prefixed so they can't collide with Wikipedia's own vars. */
+:root {
+  --rwr-text: #e8eaed;
+  --rwr-text-strong: #f4f6fa;
+  --rwr-muted: #8b93a3;
+  --rwr-hud-bg: #0f1115;
+  --rwr-card-grad: linear-gradient(180deg, #1b1f2a 0%, #14171f 100%);
+  --rwr-surface: #12151d;
+  --rwr-chip-bg: #232838;
+  --rwr-chip-text: #d4d8e2;
+  --rwr-line: #262b38;
+  --rwr-line-2: #2f3548;
+  --rwr-input-bg: #20242d;
+  --rwr-overlay: rgba(6,8,12,.72);
+  /* Wikipedia hyperlink-blue accent (dark flavor) */
+  --rwr-accent: #6699ff; --rwr-accent-ink: #fff;
+  /* Wikipedia chrome: neutral rules + subtle fills (dark flavor) */
+  --rwr-wiki-border: #54595d; --rwr-wiki-subtle: #27292d;
+  --rwr-ghost-bg: #1c2130;
+  --rwr-ghost-bg-hover: #232a3b;
+  --rwr-x-hover: #232838;
+  --rwr-card-shadow: 0 24px 60px rgba(0,0,0,.55);
+  --rwr-hud-shadow: 0 2px 10px rgba(0,0,0,.4);
+  /* start (green) + target (orange) accents */
+  --rwr-start: #3fb950;
+  --rwr-start-pc: #56d364; --rwr-start-bg: #16241a; --rwr-start-border: #2a5a33;
+  --rwr-target: #f0883e;
+  --rwr-target-bg: #241a12; --rwr-target-border: #5a3a22;
+  /* verdict badges */
+  --rwr-great-bg: rgba(86,211,100,.16); --rwr-great-tx: #56d364; --rwr-great-bd: rgba(86,211,100,.4);
+  --rwr-good-bg: rgba(110,168,254,.16); --rwr-good-tx: #9ec5ff; --rwr-good-bd: rgba(110,168,254,.4);
+  --rwr-meh-bg: rgba(240,136,62,.14); --rwr-meh-tx: #f0a868; --rwr-meh-bd: rgba(240,136,62,.35);
+  --rwr-missed-bg: rgba(102,153,255,.12); --rwr-missed-tx: #cfe0ff; --rwr-missed-bd: rgba(102,153,255,.4); --rwr-missed-strong: #fff;
+  --rwr-warn-bg: rgba(240,136,62,.1); --rwr-warn-tx: #f0c08a; --rwr-warn-bd: rgba(240,136,62,.35);
+}
+html.rwr-light {
+  --rwr-text: #1c2024;
+  --rwr-text-strong: #0b0d12;
+  --rwr-muted: #5b6472;
+  --rwr-hud-bg: #ffffff;
+  --rwr-card-grad: linear-gradient(180deg, #ffffff 0%, #f4f6fa 100%);
+  --rwr-surface: #f3f5f9;
+  --rwr-chip-bg: #eef1f6;
+  --rwr-chip-text: #2a2f3a;
+  --rwr-line: #dce1ea;
+  --rwr-line-2: #ccd3df;
+  --rwr-input-bg: #eef1f6;
+  --rwr-overlay: rgba(20,28,45,.45);
+  /* Wikipedia hyperlink-blue accent (light flavor) */
+  --rwr-accent: #3366cc; --rwr-accent-ink: #fff;
+  /* Wikipedia chrome: neutral rules + subtle fills (light flavor) */
+  --rwr-wiki-border: #a2a9b1; --rwr-wiki-subtle: #f8f9fa;
+  --rwr-ghost-bg: #eef1f6;
+  --rwr-ghost-bg-hover: #e2e7f0;
+  --rwr-x-hover: #e4e8ef;
+  --rwr-card-shadow: 0 24px 60px rgba(31,41,71,.22);
+  --rwr-hud-shadow: 0 2px 10px rgba(31,41,71,.14);
+  --rwr-start: #1a7f37;
+  --rwr-start-pc: #1a7f37; --rwr-start-bg: #e6f4ea; --rwr-start-border: #b7e0c1;
+  --rwr-target: #b45309;
+  --rwr-target-bg: #fbedd9; --rwr-target-border: #f0d2a8;
+  --rwr-great-bg: rgba(26,127,55,.12); --rwr-great-tx: #1a7f37; --rwr-great-bd: rgba(26,127,55,.4);
+  --rwr-good-bg: rgba(45,108,223,.12); --rwr-good-tx: #2d6cdf; --rwr-good-bd: rgba(45,108,223,.4);
+  --rwr-meh-bg: rgba(180,83,9,.12); --rwr-meh-tx: #b45309; --rwr-meh-bd: rgba(180,83,9,.35);
+  --rwr-missed-bg: rgba(51,102,204,.1); --rwr-missed-tx: #2a4b8d; --rwr-missed-bd: rgba(51,102,204,.4); --rwr-missed-strong: #18316b;
+  --rwr-warn-bg: rgba(180,83,9,.1); --rwr-warn-tx: #92400e; --rwr-warn-bd: rgba(180,83,9,.35);
+}
+
+#rwr-hud {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  background: var(--rwr-hud-bg);
+  color: var(--rwr-text);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  border-bottom: 1px solid var(--rwr-wiki-border);
+  box-shadow: var(--rwr-hud-shadow);
+}
+/* Push Wikipedia down so the fixed HUD doesn't cover the page top. */
+html { scroll-padding-top: 52px; }
+body { margin-top: 52px !important; }
+
+/* Hide Wikipedia's donation / fundraising banners while the extension is active.
+   Targets the CentralNotice container and the WMF/WMDE fundraising banners (which
+   are injected asynchronously - CSS still applies once they appear). */
+html.rwr-on #siteNotice,
+html.rwr-on #centralNotice,
+html.rwr-on .cn-fundraising,
+html.rwr-on #WMDE-Banner-Container,
+html.rwr-on [id^="WMDE_Banner"],
+html.rwr-on [id^="frb"],
+html.rwr-on [class^="frb-"],
+html.rwr-on [class*=" frb-"],
+html.rwr-on .frbanner,
+html.rwr-on .mw-fundraising-banner,
+html.rwr-on .fundraising-banner {
+  display: none !important;
+}
+
+/* Wikipedia's wordmark typeface (Linux Libertine, SIL OFL) - bundled in fonts/. */
+@font-face {
+  font-family: "WikiRyvals Libertine";
+  src: url("fonts/LinLibertine_R.woff2") format("woff2");
+  font-weight: 400 800; font-style: normal; font-display: swap;
+}
+#rwr-hud .rwr-brand {
+  font-family: "WikiRyvals Libertine", Georgia, "Times New Roman", serif;
+  font-weight: 700; font-size: 18px; letter-spacing: .2px;
+}
+#rwr-hud .rwr-brand .rwr-ry { color: var(--rwr-accent); }
+#rwr-hud .rwr-goal { display: flex; align-items: center; gap: 8px; }
+#rwr-hud .rwr-chip {
+  padding: 2px 9px; border-radius: 2px; font-weight: 600;
+  background: var(--rwr-wiki-subtle); border: 1px solid var(--rwr-wiki-border);
+}
+#rwr-hud .rwr-start { color: var(--rwr-start); }
+#rwr-hud .rwr-target { color: var(--rwr-target); }
+#rwr-hud .rwr-arrow { color: var(--rwr-muted); }
+#rwr-hud .rwr-stats { display: flex; gap: 14px; margin-left: auto; }
+#rwr-hud .rwr-stats b { font-size: 15px; }
+#rwr-hud .rwr-actions { display: flex; gap: 8px; }
+#rwr-hud select, #rwr-hud button {
+  background: var(--rwr-hud-bg); color: var(--rwr-text); border: 1px solid var(--rwr-wiki-border);
+  border-radius: 2px; padding: 5px 10px; font-size: 13px; cursor: pointer;
+}
+#rwr-hud #rwr-new { background: var(--rwr-accent); color: var(--rwr-accent-ink); font-weight: 700; border: none; }
+#rwr-hud .rwr-flash {
+  position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
+  background: #5a1d1d; color: #ffd9d9; border: 1px solid #a33;
+  padding: 7px 13px; border-radius: 2px; z-index: 2147483647; font-size: 13px;
+}
+#rwr-hud .rwr-hidden { display: none !important; }
+
+/* Idle (no active race): collapse to just the brand + controls - hide the
+   "-  →  -" goal chips and the 0 clicks / 0.0s / par stats so the bar stays
+   clean during normal browsing. */
+#rwr-hud.rwr-idle .rwr-goal,
+#rwr-hud.rwr-idle .rwr-stats { display: none; }
+#rwr-hud.rwr-idle .rwr-actions { margin-left: auto; }
+
+/* ---- Finish overlay -------------------------------------------------------
+   Rendered into <html> on top of live Wikipedia, so every property is set
+   explicitly (and the children are reset) to immunize the card against
+   Wikipedia's global tag styles leaking in (h2/div/b/button colors, borders…). */
+#rwr-win {
+  position: fixed; inset: 0; z-index: 2147483647;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--rwr-overlay);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  animation: rwr-win-fade .18s ease-out;
+}
+#rwr-win * { box-sizing: border-box; }
+@keyframes rwr-win-fade { from { opacity: 0; } to { opacity: 1; } }
+
+#rwr-win .rwr-win-card {
+  box-sizing: border-box;
+  background: var(--rwr-hud-bg);
+  color: var(--rwr-text); border: 1px solid var(--rwr-wiki-border);
+  border-radius: 2px; padding: 16px 20px 20px;
+  width: min(440px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto;
+  text-align: center; box-shadow: var(--rwr-card-shadow);
+  animation: rwr-win-pop .22s cubic-bezier(.2,.9,.3,1.2);
+}
+@keyframes rwr-win-pop { from { transform: translateY(8px) scale(.97); } to { transform: none; } }
+
+#rwr-win .rwr-win-top {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
+}
+#rwr-win .rwr-win-brand {
+  font-family: "WikiRyvals Libertine", Georgia, "Times New Roman", serif;
+  font-weight: 700; font-size: 17px; color: var(--rwr-text); letter-spacing: .2px;
+}
+#rwr-win .rwr-ry { color: var(--rwr-accent); }
+#rwr-win .rwr-win-x {
+  background: transparent; border: none; color: var(--rwr-muted); cursor: pointer;
+  font-size: 22px; line-height: 1; padding: 2px 6px; border-radius: 2px;
+}
+#rwr-win .rwr-win-x:hover { background: var(--rwr-x-hover); color: var(--rwr-text); }
+
+#rwr-win .rwr-win-hero { padding: 4px 0 2px; }
+#rwr-win .rwr-win-emoji { font-size: 26px; line-height: 1; margin: 0 0 4px; }
+#rwr-win .rwr-win-title {
+  font-family: "WikiRyvals Libertine", Georgia, "Times New Roman", serif;
+  font-size: 24px; font-weight: 400; color: var(--rwr-text-strong);
+  margin: 0 0 10px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--rwr-wiki-border);
+}
+#rwr-win .rwr-win-route {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  justify-content: center; margin-bottom: 12px;
+}
+
+/* Path chips (route replay + hero endpoints). */
+#rwr-win .rwr-pc {
+  display: inline-block; padding: 3px 9px; border-radius: 2px;
+  background: var(--rwr-wiki-subtle); border: 1px solid var(--rwr-wiki-border); color: var(--rwr-accent);
+  font-size: 12px; font-weight: 600; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+}
+#rwr-win .rwr-pc-start { color: var(--rwr-start-pc); border-color: var(--rwr-start-border); background: var(--rwr-start-bg); }
+#rwr-win .rwr-pc-target { color: var(--rwr-target); border-color: var(--rwr-target-border); background: var(--rwr-target-bg); }
+#rwr-win .rwr-pc-arrow { color: var(--rwr-muted); font-size: 12px; padding: 0 1px; }
+
+#rwr-win .rwr-win-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 2px;
+  font-size: 12px; font-weight: 700; letter-spacing: .3px;
+}
+#rwr-win .rwr-great { background: var(--rwr-great-bg); color: var(--rwr-great-tx); border: 1px solid var(--rwr-great-bd); }
+#rwr-win .rwr-good  { background: var(--rwr-good-bg); color: var(--rwr-good-tx); border: 1px solid var(--rwr-good-bd); }
+#rwr-win .rwr-meh   { background: var(--rwr-meh-bg); color: var(--rwr-meh-tx); border: 1px solid var(--rwr-meh-bd); }
+#rwr-win .rwr-ok    { background: var(--rwr-chip-bg); color: var(--rwr-chip-text); border: 1px solid var(--rwr-line-2); }
+
+#rwr-win .rwr-win-stats {
+  display: flex; gap: 10px; margin: 16px 0 6px;
+}
+#rwr-win .rwr-stat {
+  flex: 1; background: var(--rwr-wiki-subtle); border: 1px solid var(--rwr-wiki-border);
+  border-radius: 2px; padding: 12px 6px;
+}
+#rwr-win .rwr-stat-num {
+  font-size: 22px; font-weight: 800; color: var(--rwr-text-strong);
+  font-variant-numeric: tabular-nums;
+}
+#rwr-win .rwr-stat-lbl {
+  font-size: 11px; font-weight: 600; color: var(--rwr-muted);
+  text-transform: uppercase; letter-spacing: .6px; margin-top: 2px;
+}
+
+#rwr-win .rwr-win-warn {
+  margin: 12px 0 0; padding: 10px 12px; text-align: left;
+  background: var(--rwr-warn-bg); border: 1px solid var(--rwr-warn-bd);
+  border-left: 4px solid var(--rwr-target); border-radius: 2px;
+  color: var(--rwr-warn-tx); font-size: 12px; line-height: 1.45;
+}
+
+#rwr-win .rwr-win-missed {
+  display: flex; gap: 9px; align-items: flex-start;
+  margin: 12px 0 0; padding: 10px 12px; text-align: left;
+  background: var(--rwr-missed-bg); border: 1px solid var(--rwr-missed-bd);
+  border-left: 4px solid var(--rwr-accent); border-radius: 2px;
+  color: var(--rwr-missed-tx); font-size: 12.5px; line-height: 1.45;
+}
+#rwr-win .rwr-win-missed b { color: var(--rwr-missed-strong); font-weight: 700; }
+#rwr-win .rwr-missed-ico { font-size: 15px; line-height: 1.3; flex: 0 0 auto; }
+
+#rwr-win .rwr-win-pathwrap { margin-top: 16px; text-align: left; }
+#rwr-win .rwr-win-pathlabel {
+  font-size: 11px; font-weight: 700; color: var(--rwr-muted);
+  text-transform: uppercase; letter-spacing: .6px; margin-bottom: 7px;
+}
+#rwr-win .rwr-win-path {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  background: var(--rwr-wiki-subtle); border: 1px solid var(--rwr-wiki-border);
+  border-radius: 2px; padding: 11px 12px; max-height: 132px; overflow: auto;
+}
+
+#rwr-win .rwr-win-actions { display: flex; gap: 10px; margin-top: 18px; }
+#rwr-win .rwr-btn-primary, #rwr-win .rwr-btn-ghost {
+  flex: 1; border-radius: 2px; padding: 10px 14px; font-size: 14px;
+  font-weight: 700; cursor: pointer; border: 1px solid transparent;
+}
+#rwr-win .rwr-btn-primary {
+  color: var(--rwr-accent-ink); border: none;
+  background: var(--rwr-accent);
+}
+#rwr-win .rwr-btn-primary:hover { filter: brightness(1.08); }
+#rwr-win .rwr-btn-ghost {
+  background: var(--rwr-hud-bg); color: var(--rwr-accent); border: 1px solid var(--rwr-wiki-border);
+}
+#rwr-win .rwr-btn-ghost:hover { background: var(--rwr-ghost-bg-hover); color: var(--rwr-text); }
+
+@media (prefers-reduced-motion: reduce) {
+  #rwr-win, #rwr-win .rwr-win-card { animation: none; }
+}

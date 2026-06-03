@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Generated snapshot data (rebuild with `python -m snapshot.build_snapshot`)
+/data/snapshot/
+/data/prompts.json
+/data/runtime_cache/
+# Adjacency graph grown from real play (regenerates itself as people play)
+/data/play_graph.json
+/data/play_graph.json.tmp
+/data/play_graph.sqlite3
+/data/play_graph.sqlite3-wal
+/data/play_graph.sqlite3-shm
+# Accounts / sessions / matches DB (runtime state, created on first run)
+/data/accounts.sqlite3
+/data/accounts.sqlite3-wal
+/data/accounts.sqlite3-shm
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,40 @@
+# WikiRyvals backend - drop this service into your larger compose, or run it
+# standalone with `docker compose up -d`. State (accounts, ratings, match
+# history, and the self-growing play graph) lives on a named volume so it
+# survives restarts and redeploys.
+#
+# Config is via environment variables - copy deploy/.env.example to .env and
+# fill it in. With no WIKIRYVALS_SMTP_HOST set the backend runs in dev-auth mode
+# (login codes are logged + returned in the API response); set the SMTP_* vars to
+# email real codes in production (see deploy/.env.example and docs/DEPLOY.md).
+services:
+  wikiryvals:
+    build: .
+    image: wikiryvals:latest
+    container_name: wikiryvals
+    # Behind your own reverse proxy / TLS terminator, you can drop the published
+    # port and just put this service on the proxy's network instead.
+    ports:
+      - "${WIKIRYVALS_PORT:-8011}:8011"
+    environment:
+      # State paths (already defaulted in the image; kept here for visibility).
+      - WIKIRYVALS_PLAY_GRAPH=/app/pgdata/play_graph.sqlite3
+      - WIKIRYVALS_ACCOUNTS=/app/pgdata/accounts.sqlite3
+      # Email delivery for login codes. Leave SMTP_HOST empty for dev-auth mode.
+      - WIKIRYVALS_SMTP_HOST=${WIKIRYVALS_SMTP_HOST:-}
+      - WIKIRYVALS_SMTP_PORT=${WIKIRYVALS_SMTP_PORT:-587}
+      - WIKIRYVALS_SMTP_USER=${WIKIRYVALS_SMTP_USER:-}
+      - WIKIRYVALS_SMTP_PASS=${WIKIRYVALS_SMTP_PASS:-}
+      - WIKIRYVALS_SMTP_FROM=${WIKIRYVALS_SMTP_FROM:-no-reply@wikiryvals.com}
+    volumes:
+      - wikiryvals_pgdata:/app/pgdata
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8011/api/ext/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  wikiryvals_pgdata:

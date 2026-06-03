@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="silver II rank">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e2e8ee"/>
+      <stop offset="1" stop-color="#9aa1a8"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4 L56 14 L56 34 Q56 52 32 60 Q8 52 8 34 L8 14 Z" fill="#777d83"/>
+  <path d="M32 4 L56 14 L56 34 Q56 52 32 60 Q8 52 8 34 L8 14 Z" fill="url(#body)" transform="translate(32 32) scale(0.88) translate(-32 -32)"/>
+  <path d="M32 7 L52 15.5 Q52 17 32 24 Q12 17 12 15.5 Z" fill="#ffffff" opacity="0.16"/>
+  <path d="M22 42 L32 35 L42 42" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+  <path d="M22 35 L32 28 L42 35" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.89"/>
+  <circle cx="27.2" cy="47" r="1.4" fill="#ffffff" opacity="0.92" stroke="#00000022" stroke-width="0.5"/>
+  <circle cx="32.0" cy="47" r="1.4" fill="#ffffff" opacity="0.92" stroke="#00000022" stroke-width="0.5"/>
+  <circle cx="36.8" cy="47" r="1.4" fill="#ffffff" opacity="0.92" stroke="#00000022" stroke-width="0.5"/>
+</svg>

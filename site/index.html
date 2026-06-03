@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WikiRyvals - the free ranked Wikiracing</title>
+<meta name="description" content="WikiRyvals is a competitive Wikiracing game played as a Chrome extension on the live English Wikipedia. Race article to article using only links; fewest clicks wins." />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#2a4bd0" />
+<link rel="canonical" href="https://wikiryvals.com/" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="/wr-128.png" sizes="128x128" type="image/png" />
+<link rel="apple-touch-icon" href="/wr-128.png" />
+
+<!-- Open Graph (Facebook, Discord, Slack, iMessage, LinkedIn) -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="WikiRyvals" />
+<meta property="og:title" content="WikiRyvals - the free ranked Wikiracing game" />
+<meta property="og:description" content="Ranked, competitive Wikiracing on live Wikipedia. Race 1v1 or duos, climb the ladder, and find your Ryval. Free Chrome extension." />
+<meta property="og:url" content="https://wikiryvals.com/" />
+<meta property="og:image" content="https://wikiryvals.com/og.webp" />
+<meta property="og:image:type" content="image/webp" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="WikiRyvals - ranked Wikipedia racing" />
+
+<!-- Twitter / X card -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="WikiRyvals - the free ranked Wikiracing game" />
+<meta name="twitter:description" content="Ranked, competitive Wikiracing on live Wikipedia. Race 1v1 or duos, climb the ladder, and find your Ryval. Free Chrome extension." />
+<meta name="twitter:image" content="https://wikiryvals.com/og.webp" />
+
+<!-- Structured data. Shares the canonical Person node (@id) with ryanpolasky.com
+     so the entity lines up across sites; the game has a stable @id too. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Person",
+      "@id": "https://ryanpolasky.com/#person",
+      "name": "Ryan Polasky",
+      "url": "https://ryanpolasky.com/",
+      "sameAs": [
+        "https://www.linkedin.com/in/ryan-polasky/",
+        "https://github.com/ryanpolasky"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://wikiryvals.com/#website",
+      "url": "https://wikiryvals.com/",
+      "name": "WikiRyvals",
+      "alternateName": "WikiRyvals - ranked Wikiracing",
+      "description": "Ranked, competitive Wikiracing played as a Chrome extension on the live English Wikipedia.",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://ryanpolasky.com/#person" },
+      "author": { "@id": "https://ryanpolasky.com/#person" },
+      "copyrightHolder": { "@id": "https://ryanpolasky.com/#person" }
+    },
+    {
+      "@type": "VideoGame",
+      "@id": "https://wikiryvals.com/#game",
+      "name": "WikiRyvals",
+      "alternateName": "WikiRyvals - ranked Wikiracing",
+      "url": "https://wikiryvals.com/",
+      "description": "Ranked, competitive Wikiracing played as a Chrome extension on the live English Wikipedia. Race article to article using only links - fewest clicks wins. Play 1v1 or 2v2, climb a skill-based ladder with seasons, and find your Ryval.",
+      "image": "https://wikiryvals.com/og.webp",
+      "genre": ["Trivia", "Puzzle", "Competitive"],
+      "playMode": ["SinglePlayer", "MultiPlayer"],
+      "gamePlatform": ["Web Browser", "Google Chrome"],
+      "applicationCategory": "GameApplication",
+      "operatingSystem": "Chrome",
+      "inLanguage": "en",
+      "isPartOf": { "@id": "https://wikiryvals.com/#website" },
+      "creator": { "@id": "https://ryanpolasky.com/#person" },
+      "author": { "@id": "https://ryanpolasky.com/#person" },
+      "publisher": { "@id": "https://ryanpolasky.com/#person" },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock"
+      }
+    }
+  ]
+}
+</script>
+<style>
+  :root {
+    /* Dark theme (Wikipedia-dark flavored) */
+    --bg: #0c0e10; --content-bg: #15181c; --surface: #202428; --th-bg: #24282d;
+    --text: #eaecf0; --muted: #a2a9b1; --soft: #c8ccd1;
+    --link: #6699ff; --link-hover: #88b0ff; --visited: #b58cff; --red: #ff6e6e;
+    --line: #3a4046; --heading-line: #54595d; --code-bg: #202428;
+    --tab-bg: #181b1f;
+  }
+  body.light {
+    /* Light theme (Wikipedia Vector flavored) */
+    --bg: #f3f4f6; --content-bg: #ffffff; --surface: #f8f9fa; --th-bg: #eaecf0;
+    --text: #202122; --muted: #54595d; --soft: #202122;
+    --link: #3366cc; --link-hover: #2a4b8d; --visited: #795cb2; --red: #ba0000;
+    --line: #c8ccd1; --heading-line: #a2a9b1; --code-bg: #f8f9fa;
+    --tab-bg: #f8f9fa;
+  }
+  @font-face {
+    font-family: "WikiRyvals Libertine";
+    src: url("fonts/LinLibertine_R.woff2") format("woff2");
+    font-weight: 400; font-style: normal; font-display: swap;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--text); background: var(--bg);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; color: var(--link-hover); }
+  a:visited { color: var(--visited); }
+  code {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 2px; padding: 1px 5px; font-size: 90%;
+  }
+
+  /* Serif wordmark, like the Wikipedia logotype */
+  .wordmark {
+    font-family: "WikiRyvals Libertine", Georgia, "Times New Roman", serif;
+    font-weight: 400; letter-spacing: .2px;
+  }
+  .ry { color: var(--link); }
+  a:visited .ry { color: var(--link); }
+
+  /* Top header bar */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: var(--content-bg);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  .brand .mark { font-size: 26px; }
+  .brand .sub { color: var(--muted); font-size: 12.5px; font-style: italic; }
+  .theme-toggle {
+    flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
+    display: inline-grid; place-items: center; font-size: 14px; line-height: 1;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--line); border-radius: 2px; cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--muted); }
+
+  /* Faux Vector tab row */
+  .tabs {
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
+    padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--bg);
+    font-size: 12.5px;
+  }
+  .tabs .grp { display: flex; }
+  .tabs .tab {
+    padding: 7px 12px 6px; color: var(--link); border: 1px solid transparent;
+    border-bottom: none; cursor: default;
+  }
+  .tabs .tab.active {
+    color: var(--text); background: var(--content-bg);
+    border-color: var(--line); border-radius: 2px 2px 0 0;
+    position: relative; top: 1px;
+  }
+
+  /* Article body */
+  .content {
+    max-width: 1000px; margin: 0 auto; padding: 18px 26px 40px;
+    background: var(--content-bg); border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line); min-height: 60vh;
+  }
+  h1.title {
+    font-family: "WikiRyvals Libertine", Georgia, serif; font-weight: 400;
+    font-size: 30px; line-height: 1.25; margin: 6px 0 2px;
+    border-bottom: 1px solid var(--heading-line); padding-bottom: 6px;
+  }
+  .siteSub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .hatnote {
+    font-style: italic; color: var(--soft); font-size: 14px;
+    margin: 0 0 6px; padding-left: 1.6em;
+  }
+  h2 {
+    font-family: "WikiRyvals Libertine", Georgia, serif; font-weight: 400;
+    font-size: 23px; margin: 26px 0 8px;
+    border-bottom: 1px solid var(--heading-line); padding-bottom: 5px;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  h2 .editsection { font-family: -apple-system, sans-serif; font-size: 12px; font-weight: 400; color: var(--muted); white-space: nowrap; }
+  h3 { font-family: "WikiRyvals Libertine", Georgia, serif; font-weight: 400; font-size: 18px; margin: 18px 0 4px; }
+  p { margin: 10px 0; }
+  .content ul, .content ol { margin: 10px 0; padding-left: 28px; }
+  .content li { margin: 5px 0; }
+  sup.ref { font-size: 11px; line-height: 1; }
+  sup.ref a { text-decoration: none; }
+  b, strong { font-weight: 700; }
+
+  /* Infobox */
+  .infobox {
+    float: right; width: 300px; margin: 6px 0 16px 22px;
+    border: 1px solid var(--heading-line); background: var(--surface);
+    font-size: 13px; line-height: 1.5;
+  }
+  .infobox .ib-title {
+    text-align: center; font-weight: 700; font-size: 15px;
+    padding: 8px 10px; background: var(--th-bg); border-bottom: 1px solid var(--line);
+  }
+  .infobox .ib-cap { text-align: center; padding: 12px 10px 6px; }
+  .infobox .ib-cap .mark { font-size: 30px; }
+  .infobox .ib-cap .tag { display: block; color: var(--muted); font-style: italic; font-size: 12.5px; margin-top: 2px; }
+  .infobox table { width: 100%; border-collapse: collapse; }
+  .infobox th, .infobox td { text-align: left; vertical-align: top; padding: 6px 10px; border-top: 1px solid var(--line); }
+  .infobox th { width: 38%; color: var(--muted); font-weight: 700; }
+  .infobox .ib-cta { padding: 12px 10px; text-align: center; border-top: 1px solid var(--line); }
+
+  /* OOUI-ish progressive button (squared, no pills) */
+  .btn {
+    display: inline-block; padding: 7px 14px; border-radius: 2px;
+    font-weight: 700; font-size: 14px; cursor: pointer;
+    background: var(--link); color: #fff; border: 1px solid var(--link);
+  }
+  .btn:hover { text-decoration: none; color: #fff; filter: brightness(1.06); }
+  .btn:visited { color: #fff; }
+  .btn.secondary { background: transparent; color: var(--link); }
+
+  /* Contents (TOC) box */
+  .toc {
+    display: table; margin: 16px 0; padding: 10px 16px 12px;
+    border: 1px solid var(--line); background: var(--surface); font-size: 14px;
+  }
+  .toc .toc-title { font-weight: 700; text-align: center; margin-bottom: 6px; }
+  .toc ol { margin: 0; padding-left: 18px; }
+  .toc li { margin: 3px 0; }
+
+  /* wikitable */
+  table.wikitable { border-collapse: collapse; margin: 12px 0; width: 100%; font-size: 14px; }
+  table.wikitable th, table.wikitable td { border: 1px solid var(--heading-line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  table.wikitable th { background: var(--th-bg); font-weight: 700; }
+  table.wikitable caption { text-align: left; color: var(--muted); font-size: 13px; padding: 4px 0; }
+  .soon { color: var(--muted); font-style: italic; font-size: 12.5px; }
+
+  /* Steps as plain ordered list lead-ins */
+  .lead-in { font-weight: 700; }
+
+  /* Ranks ladder */
+  .ladder { font-weight: 700; line-height: 2; }
+  .ladder .sep { color: var(--muted); font-weight: 400; opacity: .6; margin: 0 4px; }
+  .ladder .top { color: var(--link); }
+
+  /* References */
+  .references { font-size: 13px; color: var(--soft); }
+  .references li { margin: 6px 0; }
+
+  /* Categories footer */
+  .catlinks {
+    margin-top: 30px; padding: 10px 12px; border: 1px solid var(--line);
+    background: var(--surface); font-size: 13px;
+  }
+  .catlinks .label { font-weight: 700; }
+  .disclaimer { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+
+  @media (max-width: 760px) {
+    .infobox { float: none; width: auto; margin: 6px 0 16px; }
+    .content { padding: 16px 16px 32px; }
+    .brand .sub { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="wordmark mark">Wiki<span class="ry">Ry</span>vals</span>
+    <span class="sub">The Free Ranked Wikiracing</span>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
+</header>
+
+<nav class="tabs">
+  <div class="grp">
+    <span class="tab active">Article</span>
+    <span class="tab">Talk</span>
+  </div>
+  <div class="grp">
+    <span class="tab active">Read</span>
+    <span class="tab">Install</span>
+    <span class="tab">View history</span>
+  </div>
+</nav>
+
+<main class="content">
+  <h1 class="title wordmark">Wiki<span class="ry">Ry</span>vals</h1>
+  <p class="siteSub">From WikiRyvals, the free ranked Wikiracing.</p>
+
+  <p class="hatnote">This is a fan-made project. It is not affiliated with, endorsed by, or sponsored by the Wikimedia Foundation or Wikipedia.</p>
+
+  <aside class="infobox">
+    <div class="ib-title">WikiRyvals</div>
+    <div class="ib-cap">
+      <span class="wordmark mark">Wiki<span class="ry">Ry</span>vals</span>
+      <span class="tag">"Find your Ryval."</span>
+    </div>
+    <table>
+      <tr><th>Type</th><td>Browser extension</td></tr>
+      <tr><th>Genre</th><td>Competitive <a href="#">Wikiracing</a></td></tr>
+      <tr><th>Platform</th><td>Google Chrome</td></tr>
+      <tr><th>Played on</th><td><code>en.wikipedia.org</code></td></tr>
+      <tr><th>Modes</th><td>Quick match, Daily, Custom</td></tr>
+      <tr><th>Status</th><td>Phase 0 (beta)</td></tr>
+    </table>
+    <div class="ib-cta">
+      <a class="btn" href="https://chrome.google.com/webstore" target="_blank" rel="noopener">Get the extension</a>
+    </div>
+  </aside>
+
+  <p><b>WikiRyvals</b> is a competitive <a href="#">Wikiracing</a> game played as a <a href="#install">Google Chrome extension</a> on the live <a href="https://en.wikipedia.org/" target="_blank" rel="noopener">English Wikipedia</a>.<sup class="ref"><a href="#cite-1">[1]</a></sup> Players race from a starting <a href="#">article</a> to a target article using only the <a href="#">hyperlinks</a> found on each page; the player who arrives in the fewest clicks wins.<sup class="ref"><a href="#cite-2">[2]</a></sup> Unlike most casual wiki-games, WikiRyvals adds a ranked ladder, skill-based matchmaking, and seasons, summarized by its tagline, <i>"Find your Ryval."</i></p>
+
+  <p>The game does not re-host article content: races take place on <code>en.wikipedia.org</code> in the player's own browser, with every hop validated server-side against the links that were actually present on the previous page.<sup class="ref"><a href="#cite-3">[3]</a></sup> The on-page search box and <code>Ctrl</code>+<code>F</code> are disabled during a race, and Wikipedia's donation banners are hidden for a clean view.</p>
+
+  <div class="toc" role="navigation" aria-label="Contents">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#install">Get the extension</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#par">About par</a></li>
+      <li><a href="#ranks">Ranks</a></li>
+      <li><a href="#references">References</a></li>
+    </ol>
+  </div>
+
+  <h2 id="how">How it works <span class="editsection">[<a href="#how">edit</a>]</span></h2>
+  <p>No new site to learn and no content re-hosting: play happens on real <code>en.wikipedia.org</code> through a lightweight Chrome extension.</p>
+  <ol>
+    <li><span class="lead-in">Get a start and a target.</span> Open the WikiRyvals side panel and select <i>Find a race</i>. You are dropped on a start article with a target to reach.</li>
+    <li><span class="lead-in">Click your way there.</span> Use only in-article links; the search box and <code>Ctrl</code>+<code>F</code> are disabled mid-race, so it is pure navigation skill.</li>
+    <li><span class="lead-in">Beat par, dodge the doors.</span> Reach the target in as few clicks as possible. If you walked straight past a page that linked to the answer, the finish card calls it out.</li>
+  </ol>
+
+  <h2 id="install">Get the extension <span class="editsection">[<a href="#install">edit</a>]</span></h2>
+  <p>WikiRyvals is distributed as a Google Chrome extension. There is no separate website to visit; the race runs on real <code>en.wikipedia.org</code>.</p>
+  <p><a class="btn" href="https://chrome.google.com/webstore" target="_blank" rel="noopener">Get it on the Chrome Web Store</a></p>
+  <p class="siteSub">The Chrome Web Store listing is pending. Until it is live, you can load it locally in under a minute:</p>
+  <ol>
+    <li><span class="lead-in">Grab the build.</span> Download the extension folder and unzip it anywhere on your machine.</li>
+    <li><span class="lead-in">Open Chrome extensions.</span> Go to <code>chrome://extensions</code> and enable <b>Developer mode</b> (top-right).</li>
+    <li><span class="lead-in">Load unpacked.</span> Click <b>Load unpacked</b>, pick the <code>extension/</code> folder, then open the WikiRyvals side panel and select <i>Find a race</i>.</li>
+  </ol>
+
+  <h2 id="features">Features <span class="editsection">[<a href="#features">edit</a>]</span></h2>
+  <p>The casual wiki-game space is crowded, but few projects ship a competitive layer. That layer is the point of WikiRyvals.</p>
+  <table class="wikitable">
+    <caption>Overview of features. Items marked <i>Phase 1</i> are planned.</caption>
+    <tr><th>Feature</th><th>Description</th></tr>
+    <tr><td>Ranked ladder <span class="soon">(Phase 1)</span></td><td>Skill-based matchmaking on rating <i>and</i> route difficulty, plus seasons. Not just a leaderboard, an actual ladder.</td></tr>
+    <tr><td>"Missed win" callouts</td><td>The finish card flags if you walked past a page that linked straight to the target, and how many clicks it would have saved.</td></tr>
+    <tr><td>Graph built by playing</td><td>The link graph is learned from real races rather than by hammering Wikipedia's API. It self-heals when articles change and gets smarter the more people play.</td></tr>
+    <tr><td>Anti-cheat at the core</td><td>Every hop is validated server-side against the links that were actually on the page. URL-bar jumps and search-box teleports are flagged.</td></tr>
+    <tr><td>Plays on real Wikipedia</td><td>No re-hosted content and no mirror; the article you race on is the real thing, in your own browser, with donation banners hidden.</td></tr>
+    <tr><td>Daily challenge &amp; ghost races <span class="soon">(Phase 1)</span></td><td>One shared route every day, plus asynchronous ghost races against a recorded run, so there is always someone to beat.</td></tr>
+  </table>
+
+  <h2 id="par">About par <span class="editsection">[<a href="#par">edit</a>]</span></h2>
+  <p>"Par" is the shortest possible route between a start and target. Sometimes WikiRyvals shows it and sometimes it does not, for an honest reason: to know par, the link graph is needed <i>around</i> the pages between start and target, not just the ones a player happened to visit. That graph is built from real play instead of by crawling Wikipedia's API, so:</p>
+  <ul>
+    <li><b>If the neighborhood is known</b> (from the seed snapshot or from races already run), par is computed with a <a href="#">breadth-first search</a> over that merged graph and shown.</li>
+    <li><b>If it is not known yet</b>, par is simply hidden rather than showing a number that cannot be stood behind. No fake placeholder, no guess.</li>
+    <li><b>It self-improves.</b> Every race fills in more of the graph, so par appears for more matchups over time, without ever spamming Wikipedia.</li>
+  </ul>
+  <p>The <b>missed-win</b> callout, by contrast, works on <i>any</i> race; it only needs the links on the pages a player actually walked through, which are always available.</p>
+
+  <h2 id="ranks">Ranks <span class="editsection">[<a href="#ranks">edit</a>]</span></h2>
+  <p>Tiers, placements, and variable Edit Points (EP) are based on how a player performed, not merely win or loss. The whole ladder apexes at a single rank, so <i>"Find your Ryval"</i> literally means reaching the top.</p>
+  <p class="ladder">
+    Iron <span class="sep">&rsaquo;</span> Bronze <span class="sep">&rsaquo;</span> Silver <span class="sep">&rsaquo;</span> Gold <span class="sep">&rsaquo;</span> Platinum <span class="sep">&rsaquo;</span> Diamond <span class="sep">&rsaquo;</span> Featured <span class="sep">&rsaquo;</span> Legend <span class="sep">&rsaquo;</span> <span class="top">Ryval</span>
+  </p>
+  <p class="siteSub">Familiar tiers up to Diamond, then three unique ranks (Featured, Legend, Ryval), apexing at Ryval. Final tuning lands with Phase 1.</p>
+
+  <h2 id="references">References <span class="editsection">[<a href="#references">edit</a>]</span></h2>
+  <ol class="references">
+    <li id="cite-1"><b>^</b> "How WikiRyvals works". <i>WikiRyvals project README</i>.</li>
+    <li id="cite-2"><b>^</b> Polasky, Ryan. "Find your Ryval." <i>WikiRyvals</i>.</li>
+    <li id="cite-3"><b>^</b> "Server-side hop validation". <i>WikiRyvals technical notes</i>.</li>
+  </ol>
+
+  <div class="catlinks">
+    <span class="label">Categories</span>: <a href="#">Wikiracing</a> | <a href="#">Browser games</a> | <a href="#">Google Chrome extensions</a> | <a href="#">Competitive games</a> | <a href="#">Fan-made software</a>
+  </div>
+
+  <p class="disclaimer">A fan-made competitive layer for Wikiracing. <b>Not affiliated with, endorsed by, or sponsored by the Wikimedia Foundation or Wikipedia.</b> Wikipedia content is available under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a>; the wordmark is set in Linux Libertine (SIL OFL). Gameplay happens on real Wikipedia in your own browser; article content is not re-hosted.</p>
+</main>
+
+<script>
+  // Light/dark theme: persisted in localStorage; defaults to OS preference.
+  (function () {
+    var KEY = "wikiryvals-theme";
+    var btn = document.getElementById("theme-toggle");
+    function sys() {
+      return window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function apply(theme) {
+      var light = theme === "light";
+      document.body.classList.toggle("light", light);
+      if (btn) btn.textContent = light ? "☀️" : "🌙";
+    }
+    apply(localStorage.getItem(KEY) || sys());
+    if (btn) btn.addEventListener("click", function () {
+      var next = document.body.classList.contains("light") ? "dark" : "light";
+      localStorage.setItem(KEY, next);
+      apply(next);
+    });
+  })();
+</script>
+</body>
+</html>

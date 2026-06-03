@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WikiRyvals · Admin</title>
+  <link rel="icon" href="icons/wr-32.png" />
+  <link rel="stylesheet" href="lobby.css" />
+  <style>
+    body { padding: 0; }
+    .admin-wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; }
+    .admin-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .admin-head img { width: 36px; height: 36px; border-radius: 9px; }
+    .admin-head h1 { font-size: 20px; margin: 0; }
+    .admin-sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+    .search-row { display: flex; gap: 8px; margin-bottom: 6px; }
+    .search-row input { margin: 0; }
+    .search-row button { width: auto; flex: none; }
+    .admin-status { min-height: 18px; font-size: 13px; color: var(--muted); margin: 4px 2px 14px; }
+    .admin-status.err { color: var(--red); }
+    .admin-status.ok { color: var(--green); }
+    .acct { background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+            padding: 14px; margin-bottom: 10px; }
+    .acct-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .acct-name { font-weight: 700; font-size: 15px; }
+    .acct-email { color: var(--muted); font-size: 13px; }
+    .acct-meta { color: var(--muted); font-size: 12px; margin: 4px 0 10px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+            padding: 4px 8px; border-radius: 999px; background: var(--surface-2);
+            border: 1px solid var(--line); color: var(--text); }
+    .chip button { width: auto; padding: 0 2px; border: none; background: none; color: var(--muted);
+                   font-size: 14px; line-height: 1; }
+    .chip button:hover { color: var(--red); }
+    .chip-empty { color: var(--muted); font-size: 12px; }
+    .tag-row { display: flex; gap: 8px; margin-top: 12px; }
+    .tag-row input { margin: 0; max-width: 220px; }
+    .tag-row button { width: auto; flex: none; }
+    .quick { width: auto; flex: none; padding: 6px 10px; font-size: 12px; }
+    .pill-admin { background: var(--grad); color: #fff; border: none; font-size: 10px;
+                  font-weight: 800; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="admin-wrap">
+    <div class="admin-head">
+      <img src="icons/wr-48.png" alt="" />
+      <h1>Admin dashboard</h1>
+    </div>
+    <p class="admin-sub">Search accounts and manage tags. Tags like <b>beta_tester</b> drive perks &amp; cosmetics.</p>
+
+    <div class="search-row">
+      <input id="q" type="text" placeholder="Search by username or email… (blank = newest accounts)" autocomplete="off" />
+      <button class="btn-primary" id="search-btn">Search</button>
+    </div>
+    <div class="admin-status" id="status"></div>
+
+    <div id="results"></div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

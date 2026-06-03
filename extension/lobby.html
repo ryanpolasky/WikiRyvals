@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WikiRyvals</title>
+  <link rel="icon" href="icons/favicon.svg" />
+  <link rel="stylesheet" href="lobby.css" />
+</head>
+<body class="panel">
+  <header class="brand-bar">
+    <img class="logo-mark" src="icons/wr-logo.svg" alt="WR" />
+    <div class="brand-text">
+      <div class="wordmark">Wiki<span class="ry">Ry</span>vals</div>
+      <div class="tagline">Find your Ryval.</div>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
+    <span class="season-chip" id="season-chip">Season</span>
+  </header>
+
+  <!-- ============================ AUTH ============================ -->
+  <section class="screen" id="screen-auth" hidden>
+    <div class="auth-wrap">
+      <img class="auth-logo" src="icons/wr-logo.svg" alt="WR" />
+      <h2 class="auth-h">Sign in to play ranked</h2>
+      <p class="auth-sub">Passwordless. We email you a 6-digit code, no password to forget.</p>
+
+      <!-- step: email -->
+      <div class="auth-step" id="auth-email-step">
+        <label class="fld-l" for="auth-email">Email</label>
+        <input id="auth-email" type="email" placeholder="you@school.edu" autocomplete="email" />
+        <button class="btn-primary" id="auth-send">Send login code</button>
+      </div>
+
+      <!-- step: code -->
+      <div class="auth-step" id="auth-code-step" hidden>
+        <label class="fld-l" for="auth-code">Enter the code sent to <span id="auth-email-echo"></span></label>
+        <input id="auth-code" inputmode="numeric" maxlength="6" placeholder="000000" class="code-input" />
+        <div class="dev-code" id="auth-dev-code" hidden></div>
+        <button class="btn-primary" id="auth-verify">Verify &amp; continue</button>
+        <button class="btn-link" id="auth-back">Use a different email</button>
+      </div>
+
+      <!-- step: profile (username + region) -->
+      <div class="auth-step" id="auth-profile-step" hidden>
+        <label class="fld-l" for="auth-username">Pick a username</label>
+        <input id="auth-username" maxlength="20" placeholder="3–20 chars, letters/numbers/_/-" />
+        <div class="uname-status" id="uname-status"></div>
+        <label class="fld-l" for="auth-region">Region</label>
+        <select id="auth-region">
+          <option value="NA">North America</option>
+          <option value="SA">South America</option>
+          <option value="EU">Europe</option>
+          <option value="AF">Africa</option>
+          <option value="ME">Middle East</option>
+          <option value="APAC">Asia-Pacific</option>
+          <option value="OC">Oceania</option>
+          <option value="Other">Other</option>
+        </select>
+        <p class="auth-hint" id="region-hint"></p>
+        <button class="btn-primary" id="auth-save-profile">Enter the ladder</button>
+      </div>
+
+      <p class="auth-err" id="auth-err" hidden></p>
+    </div>
+  </section>
+
+  <!-- ===================== MATCH FOUND ===================== -->
+  <section class="screen" id="screen-match" hidden>
+    <div class="match-wrap">
+      <div class="match-banner" id="match-mode">Match Found</div>
+      <div class="match-card">
+        <div class="vs-row">
+          <div class="vs-card you">
+            <div class="vs-avatar" id="vs-you-av">YOU</div>
+            <div class="vs-name" id="vs-you-name">you</div>
+            <div class="vs-meta" id="vs-you-meta"></div>
+            <div class="vs-rank" id="vs-you-rank"></div>
+          </div>
+          <div class="vs-mid">
+            <span class="vs-vs">VS</span>
+            <div class="countdown" id="match-countdown">5</div>
+          </div>
+          <div class="vs-card opp">
+            <div class="vs-avatar" id="vs-opp-av">OPP</div>
+            <div class="vs-name" id="vs-opp-name">opponent</div>
+            <div class="vs-meta" id="vs-opp-meta"></div>
+            <div class="vs-rank" id="vs-opp-rank"></div>
+          </div>
+        </div>
+        <div class="match-route">
+          <span class="route-chip" id="match-start">Start</span>
+          <span class="route-arrow">→</span>
+          <span class="route-chip target" id="match-target">Target</span>
+        </div>
+      </div>
+      <p class="match-note" id="match-note">Get ready. The race opens in a new tab.</p>
+      <button class="btn-ghost" id="match-forfeit" hidden>Forfeit</button>
+    </div>
+  </section>
+
+  <!-- ===================== RACE IN PROGRESS ===================== -->
+  <section class="screen" id="screen-racing" hidden>
+    <div class="racing-wrap">
+      <div class="racing-spinner"></div>
+      <h2>Race in progress</h2>
+      <p class="racing-route"><b id="racing-start"></b> → <b id="racing-target"></b></p>
+      <p class="racing-sub">Finish on the Wikipedia tab. We'll score it the moment you (or your Ryval) arrive.</p>
+      <div class="racing-live" id="racing-live"></div>
+      <div class="racing-opp" id="racing-opp" hidden></div>
+      <button class="btn-secondary" id="racing-watch" hidden>📺 Copy watch-party link</button>
+      <p class="racing-sub" id="racing-watch-hint" hidden></p>
+      <button class="btn-ghost" id="racing-forfeit">Forfeit race</button>
+    </div>
+  </section>
+
+  <!-- ===================== RANKED RESULTS ===================== -->
+  <section class="screen" id="screen-result" hidden>
+    <div class="result-wrap">
+      <div class="result-banner" id="result-banner">Victory</div>
+      <div class="result-route" id="result-route"></div>
+
+      <div class="rp-block">
+        <div class="rp-delta" id="rp-delta">+0</div>
+        <div class="rp-label">Edit Points</div>
+        <div class="rank-progress">
+          <div class="rank-badge" id="result-rank-badge"></div>
+          <div class="rank-bar-wrap">
+            <div class="rank-bar-top">
+              <span id="result-rank-name">Rank</span>
+              <span id="result-rank-next"></span>
+            </div>
+            <div class="rank-bar"><div class="rank-bar-fill" id="result-rank-fill"></div></div>
+            <div class="rank-bar-rp" id="result-rank-rp"></div>
+          </div>
+        </div>
+        <div class="rating-line" id="result-rating"></div>
+      </div>
+
+      <div class="promo-note" id="result-promo" hidden></div>
+
+      <div class="compare" id="result-compare"></div>
+
+      <div class="result-actions">
+        <button class="btn-primary" id="result-again">Queue again</button>
+        <button class="btn-secondary" id="result-home">Back to lobby</button>
+      </div>
+      <button class="btn-link result-share" id="result-share">📷 Share result card</button>
+      <div class="share-preview" id="share-preview" hidden>
+        <img id="share-img" alt="Match recap card" />
+        <div class="share-preview-actions">
+          <button class="btn-secondary btn-sm" id="share-download">Download</button>
+          <button class="btn-ghost btn-sm" id="share-copy">Copy image</button>
+        </div>
+        <div class="share-hint" id="share-hint"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MAIN APP ===================== -->
+  <div id="app" hidden>
+    <div class="me-bar" id="me-bar">
+      <div class="avatar" id="me-avatar">RY</div>
+      <div class="me-info">
+        <div class="me-name" id="me-name">player</div>
+        <div class="me-rank" id="me-rank"></div>
+      </div>
+      <span class="streak-chip" id="me-streak" hidden title="Daily challenge streak"></span>
+      <button class="btn-link me-logout" id="me-logout" title="Sign out">sign out</button>
+    </div>
+
+    <!-- Comeback nudge: your daily streak is alive but today isn't done yet -->
+    <div class="streak-nudge" id="streak-nudge" hidden>
+      <div class="streak-nudge-text">🔥 <b id="streak-nudge-n">0</b>-day streak - play today's daily to keep it alive</div>
+      <button class="btn-primary btn-sm" id="streak-nudge-go">Play daily</button>
+    </div>
+
+    <!-- Promotion series armed: next ranked match is your promo game -->
+    <div class="promo-banner" id="promo-banner" hidden>
+      <div class="promo-banner-text">⚑ <b>Promo game!</b> Win your next ranked match to reach <b id="promo-banner-rank">-</b>.</div>
+    </div>
+
+    <!-- Incoming duos party invite (shows on any tab) -->
+    <div class="party-banner" id="party-banner" hidden>
+      <div class="party-banner-text"><b id="party-banner-from">friend</b> invited you to duos</div>
+      <div class="party-banner-actions">
+        <button class="btn-primary btn-sm" id="party-accept">Accept</button>
+        <button class="btn-ghost btn-sm" id="party-decline">Decline</button>
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-view="play"><span class="ic">▶</span><span>Play</span></button>
+      <button class="tab" data-view="friends"><span class="ic">★</span><span>Friends</span><span class="tab-badge" id="friends-badge" hidden>0</span></button>
+      <button class="tab" data-view="rooms"><span class="ic">⌗</span><span>Rooms</span></button>
+      <button class="tab" data-view="leaderboard"><span class="ic">≣</span><span>Board</span></button>
+      <button class="tab" data-view="history"><span class="ic">↺</span><span>History</span></button>
+      <button class="tab" data-view="profile"><span class="ic">◎</span><span>Profile</span></button>
+    </nav>
+
+    <main class="content">
+      <!-- PLAY -->
+      <section class="view" id="view-play">
+        <!-- Your Ryval: one rival floated at a time (most-faced opponent) -->
+        <div class="card rival-card" id="rival-card" hidden>
+          <div class="card-top"><h3>Your Ryval</h3><span class="pill pill-rival">Ryvalry</span></div>
+          <div class="rival-body">
+            <div class="avatar" id="rival-avatar">RY</div>
+            <div class="rival-info">
+              <div class="rival-name" id="rival-name">rival</div>
+              <div class="rival-rec" id="rival-rec"></div>
+            </div>
+          </div>
+          <button class="btn-primary" id="rival-rematch">Rematch</button>
+        </div>
+
+        <div class="card feature">
+          <div class="card-top"><h3>Ranked 1v1</h3><span class="pill pill-live">Ranked</span></div>
+          <p>Head-to-head against a Ryval near your rating. EP on the line.</p>
+          <select id="rk-diff">
+            <option value="any">Any difficulty</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <button class="btn-primary" id="rk-go">Find ranked match</button>
+        </div>
+
+        <div class="card feature">
+          <div class="card-top"><h3>Ranked Duos</h3><span class="pill pill-live">2v2</span></div>
+          <p>Team up 2v2. Your team's fastest finisher decides it; you climb together.</p>
+          <select id="duo-diff">
+            <option value="any">Any difficulty</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <button class="btn-primary" id="duo-go">Find duos match</button>
+        </div>
+
+        <div class="card">
+          <div class="card-top"><h3>Quick Match</h3><span class="pill">Casual</span></div>
+          <p>Solo race against par, no EP at stake. Good for warmups.</p>
+          <select id="qm-diff">
+            <option value="any">Any difficulty</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <button class="btn-secondary" id="qm-go">Solo race</button>
+        </div>
+
+        <div class="card">
+          <div class="card-top"><h3>Daily Challenge</h3><span class="pill">Daily</span></div>
+          <p>Everyone races the same start → target. One ranked attempt per day.</p>
+          <p class="daily-route" id="daily-route">Loading today's route…</p>
+          <button class="btn-secondary" id="daily-go">Play today's</button>
+          <button class="btn-link" id="daily-board-toggle" hidden>Today's board</button>
+          <ol class="daily-board" id="daily-board" hidden></ol>
+        </div>
+
+        <div class="card">
+          <div class="card-top"><h3>Weekly Puzzle</h3><span class="pill pill-weekly">Weekly</span></div>
+          <p>One devilish hand-picked route per week. One ranked attempt - global board.</p>
+          <p class="daily-route" id="weekly-route">Loading this week's route…</p>
+          <button class="btn-secondary" id="weekly-go">Play this week's</button>
+          <button class="btn-link" id="weekly-board-toggle" hidden>This week's board</button>
+          <ol class="daily-board" id="weekly-board" hidden></ol>
+        </div>
+
+        <div class="card">
+          <div class="card-top"><h3>Custom Race</h3><span class="pill">Practice</span></div>
+          <input id="c-start" placeholder="Start article" />
+          <input id="c-target" placeholder="Target article" />
+          <button class="btn-secondary" id="c-go">Start custom race</button>
+        </div>
+        <p class="hint" id="play-hint"></p>
+      </section>
+
+      <!-- FRIENDS / DUO PARTY -->
+      <section class="view hidden" id="view-friends">
+        <div class="card feature">
+          <div class="card-top"><h3>Add a friend</h3><span class="pill">Duos</span></div>
+          <p>Add by username, then invite them to queue duos as a premade team.</p>
+          <div class="add-friend-row">
+            <input id="friend-username" maxlength="20" placeholder="their username" />
+            <button class="btn-primary" id="friend-add">Add</button>
+          </div>
+          <p class="hint" id="friends-hint"></p>
+        </div>
+
+        <div class="card" id="friend-requests-card" hidden>
+          <div class="card-top"><h3>Requests</h3></div>
+          <ul class="friend-list" id="friend-incoming"></ul>
+          <ul class="friend-list" id="friend-outgoing"></ul>
+        </div>
+
+        <div class="card">
+          <div class="card-top"><h3>Friends</h3><span class="muted-count" id="friends-count"></span></div>
+          <ul class="friend-list" id="friend-list"></ul>
+          <p class="empty-note" id="friends-empty">No friends yet. Add someone by username above.</p>
+        </div>
+      </section>
+
+      <!-- ROOMS / PRIVATE LOBBIES -->
+      <section class="view hidden" id="view-rooms">
+        <div class="card feature">
+          <div class="card-top"><h3>Private lobby</h3><span class="pill">Code</span></div>
+          <p>Create a lobby, share the code, race a friend. No friends list needed.</p>
+          <select id="lobby-diff">
+            <option value="any">Any difficulty</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <button class="btn-primary" id="lobby-create">Create lobby</button>
+        </div>
+
+        <div class="card">
+          <div class="card-top"><h3>Join with a code</h3></div>
+          <input id="lobby-code" maxlength="6" placeholder="6-character code" class="code-input-sm" />
+          <button class="btn-secondary" id="lobby-join">Join lobby</button>
+        </div>
+
+        <div class="lobby-wait" id="lobby-wait" hidden>
+          <div class="lobby-code-big" id="lobby-code-big">······</div>
+          <p class="lobby-wait-sub">Share this code. Waiting for an opponent to join…</p>
+          <div class="racing-spinner small"></div>
+          <button class="btn-ghost" id="lobby-cancel">Cancel</button>
+        </div>
+        <p class="hint" id="rooms-hint"></p>
+      </section>
+
+      <!-- LEADERBOARD -->
+      <section class="view hidden" id="view-leaderboard">
+        <div class="list" id="lb-list"><p class="preview-tag">Loading…</p></div>
+      </section>
+
+      <!-- HISTORY -->
+      <section class="view hidden" id="view-history">
+        <div class="list" id="hist-list"><p class="preview-tag">Loading…</p></div>
+      </section>
+
+      <!-- PROFILE -->
+      <section class="view hidden" id="view-profile">
+        <div class="card">
+          <div class="profile-head">
+            <div class="avatar avatar-lg" id="pf-avatar">RY</div>
+            <div>
+              <div class="profile-name" id="pf-name">player</div>
+              <div class="me-rank" id="pf-rank"></div>
+            </div>
+          </div>
+          <div class="stat-grid" id="pf-stats"></div>
+        </div>
+        <div class="card">
+          <h3>Tier progress</h3>
+          <div class="tier-carousel">
+            <button class="tc-arrow tc-prev" id="pf-ladder-prev" aria-label="Previous tier" type="button">‹</button>
+            <div class="tc-track" id="pf-ladder"></div>
+            <button class="tc-arrow tc-next" id="pf-ladder-next" aria-label="Next tier" type="button">›</button>
+          </div>
+          <div class="progress"><div class="progress-fill" id="pf-progress"></div></div>
+          <p class="preview-tag" id="pf-progress-label"></p>
+        </div>
+        <div class="card admin-card" id="admin-card" hidden>
+          <h3>Admin</h3>
+          <p>You have admin access - search accounts and manage tags (beta testers, perks, cosmetics).</p>
+          <button class="btn-primary" id="open-admin">Open admin dashboard</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="status-bar">
+    <div class="backend-dot" id="backend-dot"><span class="dot"></span><span id="backend-label">checking backend…</span></div>
+  </footer>
+
+  <!-- Rank-up celebration overlay (fires when a ranked win promotes you) -->
+  <div class="rankup-overlay" id="rankup-overlay" hidden>
+    <div class="rankup-rays"></div>
+    <div class="rankup-card">
+      <div class="rankup-kicker" id="rankup-kicker">Promoted</div>
+      <div class="rankup-badge" id="rankup-badge"></div>
+      <div class="rankup-name" id="rankup-name">Bronze</div>
+      <div class="rankup-sub" id="rankup-sub">You ranked up - keep climbing to <b>Ryval</b>.</div>
+      <button class="btn-primary btn-sm" id="rankup-dismiss">Nice</button>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="lobby.js"></script>
+</body>
+</html>

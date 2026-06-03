@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "WikiRyvals",
+  "version": "1.0.0",
+  "description": "WikiRyvals - ranked, competitive Wikiracing on live Wikipedia. Find your Ryval.",
+  "permissions": ["storage", "tabs", "webNavigation", "sidePanel"],
+  "host_permissions": [
+    "http://127.0.0.1:8011/*",
+    "https://en.wikipedia.org/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "icons": {
+    "16": "icons/wr-16.png",
+    "32": "icons/wr-32.png",
+    "48": "icons/wr-48.png",
+    "128": "icons/wr-128.png"
+  },
+  "action": {
+    "default_title": "WikiRyvals - open lobby",
+    "default_icon": {
+      "16": "icons/wr-16.png",
+      "32": "icons/wr-32.png",
+      "48": "icons/wr-48.png",
+      "128": "icons/wr-128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "lobby.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://en.wikipedia.org/wiki/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["fonts/*.woff2"],
+      "matches": ["https://en.wikipedia.org/*"]
+    }
+  ]
+}

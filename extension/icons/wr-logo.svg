@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="WikiRyvals">
+  <rect x="3" y="3" width="58" height="58" rx="12" fill="#ffffff"/>
+  <rect x="3.5" y="3.5" width="57" height="57" rx="11.5" fill="none" stroke="#a2a9b1" stroke-width="1.5"/>
+  <g stroke="#cdd2d9" stroke-width="1.4" fill="none">
+    <circle cx="32" cy="32" r="21"/>
+    <ellipse cx="32" cy="32" rx="8.5" ry="21"/>
+    <ellipse cx="32" cy="32" rx="16.5" ry="21"/>
+    <line x1="11" y1="32" x2="53" y2="32"/>
+    <path d="M13.5 21 Q32 16 50.5 21"/>
+    <path d="M13.5 43 Q32 48 50.5 43"/>
+  </g>
+  <text x="32" y="42" text-anchor="middle" font-family="'Linux Libertine','Georgia','Times New Roman',serif" font-size="28" font-weight="700" fill="#202122" letter-spacing="-1" stroke="#ffffff" stroke-width="3.4" paint-order="stroke">WR</text>
+</svg>
