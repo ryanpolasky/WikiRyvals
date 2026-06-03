@@ -6,6 +6,7 @@
   "permissions": ["storage", "tabs", "webNavigation", "sidePanel"],
   "host_permissions": [
     "http://127.0.0.1:8011/*",
+    "https://api.wikiryvals.com/*",
     "https://en.wikipedia.org/*"
   ],
   "background": { "service_worker": "background.js" },
