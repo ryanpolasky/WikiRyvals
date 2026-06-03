@@ -86,6 +86,42 @@ html.rwr-light {
 html { scroll-padding-top: 52px; }
 body { margin-top: 52px !important; }
 
+/* "Pull tab" pinned to the right edge (just under the HUD) that opens the
+   WikiRyvals side panel - a discoverable alternative to the toolbar icon. */
+#rwr-pulltab {
+  position: fixed;
+  top: 66px;
+  right: -8px; /* extend past the viewport edge so the hover slide never reveals the cut right edge */
+  z-index: 2147483640;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 20px 9px 12px; /* extra 8px right padding offsets the -8px right, keeping the WR in place */
+  background: var(--rwr-hud-bg);
+  color: var(--rwr-text);
+  border: 1px solid var(--rwr-wiki-border);
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
+  box-shadow: -2px 2px 12px rgba(0,0,0,.22);
+  cursor: pointer;
+  font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  transform: translateX(0);
+  transition: transform .16s ease, background .15s ease, box-shadow .15s ease;
+}
+#rwr-pulltab:hover {
+  background: var(--rwr-chip-bg);
+  transform: translateX(-3px);
+  box-shadow: -3px 3px 16px rgba(0,0,0,.3);
+}
+#rwr-pulltab:focus-visible { outline: 2px solid var(--rwr-accent); outline-offset: 2px; }
+#rwr-pulltab .rwr-pt-ico {
+  font-family: "WikiRyvals Libertine", Georgia, "Times New Roman", serif;
+  font-weight: 800; font-size: 15px; line-height: 1; letter-spacing: .3px;
+}
+#rwr-pulltab .rwr-pt-ico .rwr-ry { color: var(--rwr-accent); }
+#rwr-pulltab .rwr-pt-label { white-space: nowrap; }
+
 /* Hide Wikipedia's donation / fundraising banners while the extension is active.
    Targets the CentralNotice container and the WMF/WMDE fundraising banners (which
    are injected asynchronously - CSS still applies once they appear). */
@@ -124,7 +160,10 @@ html.rwr-on .fundraising-banner {
 #rwr-hud .rwr-arrow { color: var(--rwr-muted); }
 #rwr-hud .rwr-stats { display: flex; gap: 14px; margin-left: auto; }
 #rwr-hud .rwr-stats b { font-size: 15px; }
-#rwr-hud .rwr-actions { display: flex; gap: 8px; }
+#rwr-hud .rwr-actions { display: flex; gap: 8px; align-items: center; }
+/* Sketchy day/night switch (component styles come from theme-switch.css).
+   order:1 pushes it to the far right of the actions row (everything else is 0). */
+#rwr-hud .theme-switch { --toggle-size: 9.5px; flex: none; order: 1; }
 #rwr-hud select, #rwr-hud button {
   background: var(--rwr-hud-bg); color: var(--rwr-text); border: 1px solid var(--rwr-wiki-border);
   border-radius: 2px; padding: 5px 10px; font-size: 13px; cursor: pointer;
@@ -261,7 +300,14 @@ html.rwr-on .fundraising-banner {
   border-radius: 2px; padding: 11px 12px; max-height: 132px; overflow: auto;
 }
 
-#rwr-win .rwr-win-actions { display: flex; gap: 10px; margin-top: 18px; }
+#rwr-win .rwr-win-cta {
+  display: block; width: 100%; margin-top: 16px; box-sizing: border-box;
+  padding: 11px 14px; border-radius: 2px; border: 1px solid var(--rwr-accent);
+  background: var(--rwr-accent); color: var(--rwr-accent-ink);
+  font-size: 13.5px; font-weight: 700; cursor: pointer; text-align: center;
+}
+#rwr-win .rwr-win-cta:hover { filter: brightness(1.08); }
+#rwr-win .rwr-win-actions { display: flex; gap: 10px; margin-top: 10px; }
 #rwr-win .rwr-btn-primary, #rwr-win .rwr-btn-ghost {
   flex: 1; border-radius: 2px; padding: 10px 14px; font-size: 14px;
   font-weight: 700; cursor: pointer; border: 1px solid transparent;

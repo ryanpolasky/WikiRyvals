@@ -106,7 +106,7 @@ function applyWikipediaTheme(theme) {
 }
 function syncThemeButton() {
   const b = document.getElementById("rwr-theme");
-  if (b) b.textContent = rwrTheme === "light" ? "☀️" : "🌙";
+  if (b) b.checked = rwrTheme === "dark"; // checkbox: checked = dark/night
 }
 function loadTheme() {
   try {
@@ -118,7 +118,8 @@ function loadTheme() {
   }
 }
 function toggleTheme() {
-  const next = rwrTheme === "light" ? "dark" : "light";
+  const b = document.getElementById("rwr-theme");
+  const next = b && b.checked ? "dark" : "light"; // checked = dark/night
   applyTheme(next);
   try { chrome.storage.local.set({ [RWR_THEME_KEY]: next }); } catch (_) {}
 }
@@ -133,9 +134,34 @@ try {
 
 let tick = null;
 let timeBase = { elapsed: 0, at: 0, running: false };
+// Synchronous mirror of "is a race live", kept current by updateHud(). The Ctrl+F
+// handler needs this because it must preventDefault() *synchronously* - awaiting
+// the background first lets the browser open the find bar before we can block it.
+let raceActive = false;
 
 function fmt(ms) {
   return (ms / 1000).toFixed(1) + "s";
+}
+
+// Inject the namespaced SVG filter defs the theme switch references (filter:
+// url(#rwr-sketchy*)). They must live in the page DOM; injecting once is enough.
+function ensureSketchyDefs() {
+  if (document.getElementById("rwr-sketchy-defs")) return;
+  const wrap = document.createElement("div");
+  wrap.innerHTML =
+    '<svg id="rwr-sketchy-defs" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">' +
+    '<defs>' +
+    '<filter id="rwr-sketchy" x="-10%" y="-10%" width="120%" height="120%">' +
+    '<feTurbulence type="turbulence" baseFrequency="0.035 0.042" numOctaves="4" result="noise" seed="42"></feTurbulence>' +
+    '<feDisplacementMap in="SourceGraphic" in2="noise" scale="4.5" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>' +
+    '</filter>' +
+    '<filter id="rwr-sketchy-sm" x="-18%" y="-18%" width="136%" height="136%">' +
+    '<feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="3" result="noise" seed="7"></feTurbulence>' +
+    '<feDisplacementMap in="SourceGraphic" in2="noise" scale="2.5" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>' +
+    '</filter>' +
+    '</defs></svg>';
+  const svg = wrap.firstElementChild;
+  if (svg) document.documentElement.appendChild(svg);
 }
 
 function ensureHud() {
@@ -157,7 +183,40 @@ function ensureHud() {
       <span id="rwr-par-wrap">par <b id="rwr-par">–</b></span>
     </div>
     <div class="rwr-actions">
-      <button id="rwr-theme" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
+      <label class="theme-switch" id="rwr-theme-switch" title="Toggle light / dark">
+        <input class="theme-switch__checkbox" id="rwr-theme" type="checkbox" aria-label="Toggle theme" />
+        <div class="theme-switch__container">
+          <div class="theme-switch__clouds"></div>
+          <div class="theme-switch__stars-container">
+            <svg fill="none" viewBox="0 0 144 55" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M135.831 3.00688C135.055 3.85027 134.111 4.29946 133 4.35447C134.111 4.40947 135.055 4.85867 135.831 5.71123C136.607 6.55462 136.996 7.56303 136.996 8.72727C136.996 7.95722 137.172 7.25134 137.525 6.59129C137.886 5.93124 138.372 5.39954 138.98 5.00535C139.598 4.60199 140.268 4.39114 141 4.35447C139.88 4.2903 138.936 3.85027 138.16 3.00688C137.384 2.16348 136.996 1.16425 136.996 0C136.996 1.16425 136.607 2.16348 135.831 3.00688ZM31 23.3545C32.1114 23.2995 33.0551 22.8503 33.8313 22.0069C34.6075 21.1635 34.9956 20.1642 34.9956 19C34.9956 20.1642 35.3837 21.1635 36.1599 22.0069C36.9361 22.8503 37.8798 23.2903 39 23.3545C38.2679 23.3911 37.5976 23.602 36.9802 24.0053C36.3716 24.3995 35.8864 24.9312 35.5248 25.5913C35.172 26.2513 34.9956 26.9572 34.9956 27.7273C34.9956 26.563 34.6075 25.5546 33.8313 24.7112C33.0551 23.8587 32.1114 23.4095 31 23.3545ZM0 36.3545C1.11136 36.2995 2.05513 35.8503 2.83131 35.0069C3.6075 34.1635 3.99559 33.1642 3.99559 32C3.99559 33.1642 4.38368 34.1635 5.15987 35.0069C5.93605 35.8503 6.87982 36.2903 8 36.3545C7.26792 36.3911 6.59757 36.602 5.98015 37.0053C5.37155 37.3995 4.88644 37.9312 4.52481 38.5913C4.172 39.2513 3.99559 39.9572 3.99559 40.7273C3.99559 39.563 3.6075 38.5546 2.83131 37.7112C2.05513 36.8587 1.11136 36.4095 0 36.3545ZM56.8313 24.0069C56.0551 24.8503 55.1114 25.2995 54 25.3545C55.1114 25.4095 56.0551 25.8587 56.8313 26.7112C57.6075 27.5546 57.9956 28.563 57.9956 29.7273C57.9956 28.9572 58.172 28.2513 58.5248 27.5913C58.8864 26.9312 59.3716 26.3995 59.9802 26.0053C60.5976 25.602 61.2679 25.3911 62 25.3545C60.8798 25.2903 59.9361 24.8503 59.1599 24.0069C58.3837 23.1635 57.9956 22.1642 57.9956 21C57.9956 22.1642 57.6075 23.1635 56.8313 24.0069ZM81 25.3545C82.1114 25.2995 83.0551 24.8503 83.8313 24.0069C84.6075 23.1635 84.9956 22.1642 84.9956 21C84.9956 22.1642 85.3837 23.1635 86.1599 24.0069C86.9361 24.8503 87.8798 25.2903 89 25.3545C88.2679 25.3911 87.5976 25.602 86.9802 26.0053C86.3716 26.3995 85.8864 26.9312 85.5248 27.5913C85.172 28.2513 84.9956 28.9572 84.9956 29.7273C84.9956 28.563 84.6075 27.5546 83.8313 26.7112C83.0551 25.8587 82.1114 25.4095 81 25.3545ZM136 36.3545C137.111 36.2995 138.055 35.8503 138.831 35.0069C139.607 34.1635 139.996 33.1642 139.996 32C139.996 33.1642 140.384 34.1635 141.16 35.0069C141.936 35.8503 142.88 36.2903 144 36.3545C143.268 36.3911 142.598 36.602 141.98 37.0053C141.372 37.3995 140.886 37.9312 140.525 38.5913C140.172 39.2513 139.996 39.9572 139.996 40.7273C139.996 39.563 139.607 38.5546 138.831 37.7112C138.055 36.8587 137.111 36.4095 136 36.3545ZM101.831 49.0069C101.055 49.8503 100.111 50.2995 99 50.3545C100.111 50.4095 101.055 50.8587 101.831 51.7112C102.607 52.5546 102.996 53.563 102.996 54.7273C102.996 53.9572 103.172 53.2513 103.525 52.5913C103.886 51.9312 104.372 51.3995 104.98 51.0053C105.598 50.602 106.268 50.3911 107 50.3545C105.88 50.2903 104.936 49.8503 104.16 49.0069C103.384 48.1635 102.996 47.1642 102.996 46C102.996 47.1642 102.607 48.1635 101.831 49.0069Z" clip-rule="evenodd" fill-rule="evenodd"></path></svg>
+          </div>
+          <div class="theme-switch__circle-container">
+            <div class="theme-switch__sun-moon-container">
+              <div class="theme-switch__moon">
+                <div class="theme-switch__spot"></div>
+                <div class="theme-switch__spot"></div>
+                <div class="theme-switch__spot"></div>
+              </div>
+            </div>
+          </div>
+          <div class="theme-switch__shooting-star"></div>
+          <div class="theme-switch__shooting-star-2"></div>
+          <div class="theme-switch__meteor"></div>
+          <div class="theme-switch__stars-cluster">
+            <div class="star"></div>
+            <div class="star"></div>
+            <div class="star"></div>
+            <div class="star"></div>
+            <div class="star"></div>
+          </div>
+          <div class="theme-switch__aurora"></div>
+          <div class="theme-switch__comets">
+            <div class="comet"></div>
+            <div class="comet"></div>
+          </div>
+        </div>
+      </label>
+      <button id="rwr-results" class="rwr-hidden" title="Show your last result">Results</button>
       <select id="rwr-diff" title="Difficulty">
         <option value="any">Any</option><option value="easy">Easy</option>
         <option value="medium">Medium</option><option value="hard">Hard</option>
@@ -165,14 +224,43 @@ function ensureHud() {
       <button id="rwr-new">New race</button>
     </div>
     <div id="rwr-flash" class="rwr-flash rwr-hidden"></div>`;
+  ensureSketchyDefs();
   document.documentElement.appendChild(hud);
   hud.querySelector("#rwr-new").addEventListener("click", async () => {
     const difficulty = hud.querySelector("#rwr-diff").value;
     await send("newRace", { difficulty });
   });
-  hud.querySelector("#rwr-theme").addEventListener("click", toggleTheme);
+  hud.querySelector("#rwr-theme").addEventListener("change", toggleTheme);
+  // Re-open the results modal after it's been dismissed: the finished race stays
+  // in storage until the next one starts, so re-fetch it and re-render the card.
+  hud.querySelector("#rwr-results").addEventListener("click", async () => {
+    const r = await send("getRace");
+    if (r.ok && r.race && r.race.finished) renderWin(r.race);
+  });
   syncThemeButton();
   return hud;
+}
+
+// A small "pull tab" pinned to the right edge of every Wikipedia article that
+// opens the WikiRyvals side panel - so you don't have to hunt for the toolbar
+// icon. A content script can't open the panel itself (no sidePanel API, and the
+// open() call needs a user gesture), so the click just messages the background,
+// which opens the panel synchronously while this click's gesture is still live.
+function ensurePullTab() {
+  if (document.getElementById("rwr-pulltab")) return;
+  const tab = document.createElement("button");
+  tab.id = "rwr-pulltab";
+  tab.type = "button";
+  tab.title = "Open WikiRyvals";
+  tab.setAttribute("aria-label", "Open the WikiRyvals panel");
+  tab.innerHTML =
+    `<span class="rwr-pt-ico" aria-hidden="true">W<span class="rwr-ry">R</span></span>` +
+    `<span class="rwr-pt-label">Lobby</span>`;
+  tab.addEventListener("click", async () => {
+    const r = await send("openSidePanel");
+    if (!r || !r.ok) flash("Couldn't open the panel - click the WikiRyvals toolbar icon (or update Chrome).");
+  });
+  document.documentElement.appendChild(tab);
 }
 
 function flash(msg) {
@@ -260,6 +348,7 @@ function renderWin(race) {
         <div class="rwr-win-pathlabel">Your route</div>
         <div class="rwr-win-path">${pathChips(race.path, race.target)}</div>
       </div>
+      <button class="rwr-win-cta" id="rwr-mp">Make a free account to play multiplayer &rarr;</button>
       <div class="rwr-win-actions">
         <button class="rwr-btn-primary" id="rwr-again">New race</button>
         <button class="rwr-btn-ghost" id="rwr-dismiss">Keep reading</button>
@@ -273,6 +362,17 @@ function renderWin(race) {
   ov.querySelector("#rwr-dismiss").addEventListener("click", () => ov.remove());
   ov.querySelector("#rwr-close").addEventListener("click", () => ov.remove());
   ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+  // Upsell: solo is account-free, but multiplayer needs an account. Opens the
+  // side panel (sign-up / lobby). Soften the copy if they're already signed in.
+  const mp = ov.querySelector("#rwr-mp");
+  if (mp) {
+    mp.addEventListener("click", () => { send("openSidePanel"); });
+    try {
+      chrome.storage.local.get(["wr_token"], (r) => {
+        if (r && r.wr_token) mp.textContent = "Open the lobby to play 1v1 & duos \u2192";
+      });
+    } catch (_) {}
+  }
 }
 
 function applyRaceMode(active) {
@@ -292,13 +392,16 @@ function applyRaceMode(active) {
   });
 }
 
-function updateHud(race) {
+function updateHud(race, reveal) {
   const hud = ensureHud();
+  raceActive = !!(race && !race.finished);
+  const resultsBtn = hud.querySelector("#rwr-results");
   if (!race) {
     // No active race: collapse the bar to just the brand + controls, hiding the
     // goal chips and the clicks/timer/par stats (see .rwr-idle in content.css).
     hud.classList.add("rwr-idle");
     hud.querySelector("#rwr-par-wrap").style.display = "none";
+    if (resultsBtn) resultsBtn.classList.add("rwr-hidden");
     timeBase = { elapsed: 0, at: 0, running: false };
     stopTimer();
     applyRaceMode(false);
@@ -318,12 +421,18 @@ function updateHud(race) {
     parWrap.style.display = "none";
   }
   applyRaceMode(!race.finished);
+  // Once finished, surface a "Results" button so the modal can be reopened after
+  // it's dismissed (otherwise the navbar just holds the frozen stats).
+  if (resultsBtn) resultsBtn.classList.toggle("rwr-hidden", !race.finished);
 
   timeBase = { elapsed: race.elapsed_ms, at: Date.now(), running: !race.finished };
   document.getElementById("rwr-timer").textContent = fmt(race.elapsed_ms);
   if (race.finished) {
     stopTimer();
-    renderWin(race);
+    // Only auto-open the modal on the *transition* to finished (this visit).
+    // Later navigations come through init()'s else branch with reveal omitted, so
+    // it won't re-pop on every page; the HUD's "Results" button reopens it.
+    if (reveal) renderWin(race);
   } else {
     startTimer();
   }
@@ -335,15 +444,17 @@ async function init() {
   document.documentElement.classList.add("rwr-on");
   loadTheme();
   ensureHud();
+  ensurePullTab();
   // Disable find-in-page (a classic Wikirace cheat) whenever a race is live.
-  document.addEventListener("keydown", async (ev) => {
-    if ((ev.ctrlKey || ev.metaKey) && ["f", "g"].includes(ev.key.toLowerCase())) {
-      const r = await send("getRace");
-      if (r.ok && r.race && !r.race.finished) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        flash("Find (Ctrl+F) is disabled during a race.");
-      }
+  document.addEventListener("keydown", (ev) => {
+    // Synchronous on purpose (see raceActive): we must preventDefault() before
+    // yielding, or Chrome opens the find bar regardless.
+    if (!raceActive) return;
+    const k = ev.key ? ev.key.toLowerCase() : "";
+    if ((ev.ctrlKey || ev.metaKey) && (k === "f" || k === "g")) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      flash("Find (Ctrl+F) is disabled during a race.");
     }
   }, true);
 
@@ -357,7 +468,7 @@ async function init() {
   const title = currentTitle();
   if (title && !race.finished) {
     const resp = await send("visit", { title, links: collectLinks() });
-    updateHud(resp.ok ? resp.race : race);
+    updateHud(resp.ok ? resp.race : race, true);
     if (resp.ok && resp.race && resp.race.path && resp.race.path.length >= 2) {
       const last = resp.race.path[resp.race.path.length - 1];
       if (resp.race.flagged && last === title && resp.race.legal === false) {

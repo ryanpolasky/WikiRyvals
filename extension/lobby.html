@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WikiRyvals</title>
-  <link rel="icon" href="icons/favicon.svg" />
+  <link rel="icon" href="icons/wr-logo.svg" />
   <link rel="stylesheet" href="lobby.css" />
 </head>
 <body class="panel">
@@ -14,8 +14,9 @@
       <div class="wordmark">Wiki<span class="ry">Ry</span>vals</div>
       <div class="tagline">Find your Ryval.</div>
     </div>
-    <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
-    <span class="season-chip" id="season-chip">Season</span>
+    <div class="brand-tools">
+      <span class="season-chip" id="season-chip" hidden></span>
+    </div>
   </header>
 
   <!-- ============================ AUTH ============================ -->
@@ -23,12 +24,12 @@
     <div class="auth-wrap">
       <img class="auth-logo" src="icons/wr-logo.svg" alt="WR" />
       <h2 class="auth-h">Sign in to play ranked</h2>
-      <p class="auth-sub">Passwordless. We email you a 6-digit code, no password to forget.</p>
+      <p class="auth-sub">We email you a 6-digit code, no password to forget.</p>
 
       <!-- step: email -->
       <div class="auth-step" id="auth-email-step">
         <label class="fld-l" for="auth-email">Email</label>
-        <input id="auth-email" type="email" placeholder="you@school.edu" autocomplete="email" />
+        <input id="auth-email" type="email" placeholder="you@email.com" autocomplete="email" />
         <button class="btn-primary" id="auth-send">Send login code</button>
       </div>
 
@@ -333,12 +334,12 @@
 
       <!-- LEADERBOARD -->
       <section class="view hidden" id="view-leaderboard">
-        <div class="list" id="lb-list"><p class="preview-tag">Loading…</p></div>
+        <div class="list is-empty" id="lb-list"><p class="preview-tag">Loading…</p></div>
       </section>
 
       <!-- HISTORY -->
       <section class="view hidden" id="view-history">
-        <div class="list" id="hist-list"><p class="preview-tag">Loading…</p></div>
+        <div class="list is-empty" id="hist-list"><p class="preview-tag">Loading…</p></div>
       </section>
 
       <!-- PROFILE -->

@@ -131,7 +131,7 @@ async function main() {
     connect();
   } catch (e) {
     $("content").innerHTML = `<h2>Couldn't load the match</h2>` +
-      `<p>It may have already ended, or the backend isn't running on :8011.</p>`;
+      `<p>It may have already ended, or the backend is unavailable.</p>`;
     setLive(false, "unavailable");
   }
 }

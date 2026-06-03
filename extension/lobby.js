@@ -14,6 +14,13 @@ let TOKEN = null;
 let ME = null;                 // current user dict
 const poll = { ticket: null, result: null, lobby: null }; // interval handles
 
+// Presence port so the in-page pull tab can toggle this panel shut (Chrome has
+// no sidePanel.close(), so we close ourselves when the background asks).
+try {
+  const panelPort = chrome.runtime.connect({ name: "rwr-panel" });
+  panelPort.onMessage.addListener((m) => { if (m && m.type === "close") window.close(); });
+} catch (_) {}
+
 // ---------------------------------------------------------------- net helpers
 
 function bgOnce(type, extra, timeoutMs) {
@@ -88,6 +95,9 @@ function fmtTime(ms) {
 function cbadgesHTML(tags, { compact = false } = {}) {
   if (!Array.isArray(tags) || !tags.length) return "";
   let out = "";
+  if (tags.includes("creator")) {
+    out += ` <span class="cbadge cbadge-creator" title="Creator">Creator</span>`;
+  }
   if (tags.includes("beta_tester")) {
     out += ` <span class="cbadge cbadge-beta" title="Beta Tester">${compact ? "Beta" : "Beta Tester"}</span>`;
   }
@@ -181,23 +191,23 @@ function systemTheme() {
 function applyTheme(theme) {
   rwrTheme = theme === "light" ? "light" : "dark";
   document.body.classList.toggle("light", rwrTheme === "light");
-  const b = $("theme-toggle");
-  if (b) b.textContent = rwrTheme === "light" ? "☀️" : "🌙";
 }
-function toggleTheme() {
-  const next = rwrTheme === "light" ? "dark" : "light";
-  applyTheme(next);
-  try { chrome.storage.local.set({ [RWR_THEME_KEY]: next }); } catch (_) {}
-}
-(function initTheme() {
-  const btn = $("theme-toggle");
-  if (btn) btn.addEventListener("click", toggleTheme);
+function savedTheme(cb) {
   try {
-    chrome.storage.local.get([RWR_THEME_KEY], (res) => applyTheme((res && res[RWR_THEME_KEY]) || systemTheme()));
+    chrome.storage.local.get([RWR_THEME_KEY], (res) => cb((res && res[RWR_THEME_KEY]) || systemTheme()));
+  } catch (_) { cb(systemTheme()); }
+}
+// The theme toggle now lives only in the in-page HUD; the panel just follows the
+// saved choice and live-updates when it changes (here or in another tab).
+(function initTheme() {
+  savedTheme(applyTheme);
+  try {
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && changes[RWR_THEME_KEY]) applyTheme(changes[RWR_THEME_KEY].newValue || systemTheme());
+      if (area === "local" && changes[RWR_THEME_KEY]) {
+        applyTheme(changes[RWR_THEME_KEY].newValue || systemTheme());
+      }
     });
-  } catch (_) { applyTheme(systemTheme()); }
+  } catch (_) {}
 })();
 
 // ---------------------------------------------------------------- tabs
@@ -383,8 +393,10 @@ function enterApp() {
 async function refreshSeason() {
   try {
     const s = (await api("/api/ext/season")).season;
-    $("season-chip").textContent = `${s.label} · Day ${s.day}`;
-    $("season-chip").title = `${s.label}, day ${s.day} of ${s.length_days}`;
+    const chip = $("season-chip");
+    chip.textContent = s.label;
+    chip.title = `${s.label}, day ${s.day} of ${s.length_days}`;
+    chip.hidden = false; // only reveal once we have the real season
   } catch (_) {}
 }
 
@@ -755,7 +767,7 @@ async function launchRace(match, mode) {
     } catch (e) { /* non-fatal: result poll will report no race */ }
     enterRacing(match);
   } catch (e) {
-    hint("Couldn't start the race. Is the backend on :8011?", "err");
+    hint("Couldn't start the race. The backend may be unavailable.", "err");
     backToLobby();
   }
 }
@@ -1199,9 +1211,9 @@ async function startSolo(opts) {
     if (resp && resp.ok && resp.race) race = resp.race;
     else race = await startRaceDirect(opts.difficulty, opts.start, opts.target);
     if (race && race.race_id) hint(`Race started: ${race.start} → ${race.target}. Opened in a new tab, go race!`, "ok");
-    else hint("Couldn't start a race. Is the backend running on :8011?", "err");
+    else hint("Couldn't start a race. The backend may be unavailable.", "err");
   } catch (e) {
-    hint("Couldn't start a race. Is the backend running on :8011?", "err");
+    hint("Couldn't start a race. The backend may be unavailable.", "err");
   }
 }
 $("qm-go").addEventListener("click", () => startSolo({ difficulty: $("qm-diff").value }));
@@ -1239,8 +1251,7 @@ async function loadRival() {
 async function refreshDaily() {
   try {
     const d = await api("/api/ext/daily" + (TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ""));
-    const par = d.par ? ` · par ${d.par}` : "";
-    $("daily-route").textContent = `${d.start} → ${d.target}${par}`;
+    $("daily-route").textContent = `${d.start} → ${d.target}`;
     $("daily-board-toggle").hidden = false;
     const res = d.your_result;
     if (res) {
@@ -1410,7 +1421,8 @@ async function loadLeaderboard() {
   const list = $("lb-list");
   try {
     const r = await api("/api/ext/leaderboard?limit=50");
-    if (!r.entries.length) { list.innerHTML = `<p class="preview-tag">No ranked players yet. Be the first, queue up!</p>`; return; }
+    if (!r.entries.length) { list.className = "list is-empty"; list.innerHTML = `<p class="preview-tag">No ranked players yet. Be the first, queue up!</p>`; return; }
+    list.className = "list";
     list.innerHTML = r.entries.map((e) => {
       const mine = ME && e.id === ME.id;
       const rk = e.rank || {};
@@ -1421,7 +1433,7 @@ async function loadLeaderboard() {
         <span class="li-sub">${tier} · ${e.rp} EP · ${Math.round(e.rating)}</span></div>
         <span class="li-end">${e.wins}W ${e.losses}L</span></div>`;
     }).join("");
-  } catch (e) { list.innerHTML = `<p class="preview-tag">Couldn't load leaderboard.</p>`; }
+  } catch (e) { list.className = "list is-empty"; list.innerHTML = `<p class="preview-tag">Couldn't load leaderboard.</p>`; }
 }
 
 // ================================================================ HISTORY
@@ -1430,7 +1442,8 @@ async function loadHistory() {
   const list = $("hist-list");
   try {
     const r = await api("/api/ext/history?limit=25", { auth: true });
-    if (!r.matches.length) { list.innerHTML = `<p class="preview-tag">No matches yet. Play a ranked race or private lobby!</p>`; return; }
+    if (!r.matches.length) { list.className = "list is-empty"; list.innerHTML = `<p class="preview-tag">No matches yet. Play a game!</p>`; return; }
+    list.className = "list";
     list.innerHTML = r.matches.map((m) => {
       const res = m.result === "win" ? `<span class="win">Win</span>` : (m.result === "draw" ? `<span class="flag">Draw</span>` : (m.result === "loss" && m.time_ms ? `<span class="loss">Loss</span>` : `<span class="loss">DNF</span>`));
       const rp = m.mode === "ranked" ? ` · <span class="${m.rp_delta >= 0 ? "win" : "loss"}">${m.rp_delta >= 0 ? "+" : ""}${m.rp_delta} EP</span>` : ` · <span class="li-sub">private</span>`;
@@ -1438,7 +1451,7 @@ async function loadHistory() {
       return `<div class="li"><div class="li-main"><b>${m.start} → ${m.target}</b>
         <span class="li-sub">${res}${rp} · ${m.clicks ?? "-"} clicks · ${fmtTime(m.time_ms)}${m.par ? " · par " + m.par : ""}${vs}</span></div></div>`;
     }).join("");
-  } catch (e) { list.innerHTML = `<p class="preview-tag">Couldn't load history.</p>`; }
+  } catch (e) { list.className = "list is-empty"; list.innerHTML = `<p class="preview-tag">Couldn't load history.</p>`; }
 }
 
 // ================================================================ PROFILE
@@ -1484,8 +1497,7 @@ async function loadProfile() {
     <div class="stat"><div class="stat-n">${ME.streak >= 0 ? "▲" : "▼"}${Math.abs(ME.streak)}</div><div class="stat-l">Streak</div></div>
     <div class="stat"><div class="stat-n">${fmtTime(ME.best_time_ms)}</div><div class="stat-l">Best</div></div>
     <div class="stat"><div class="stat-n">🔥${(ME.daily && ME.daily.streak) || 0}</div><div class="stat-l">Daily streak</div></div>
-    <div class="stat"><div class="stat-n">${ME.wins}</div><div class="stat-l">Wins</div></div>
-    <div class="stat"><div class="stat-n">${ME.flags}</div><div class="stat-l">Flags</div></div>`;
+    <div class="stat"><div class="stat-n">${ME.wins}</div><div class="stat-l">Wins</div></div>`;
 
   const curSlug = (ME.rank && ME.rank.slug && ME.rank.slug !== "unranked") ? ME.rank.slug : "iron";
   const curIdx = TIER_SLUGS.indexOf(curSlug);
@@ -1511,7 +1523,11 @@ async function loadProfile() {
     const res = await fetch(`${BACKEND}/api/ext/health`);
     if (res.ok) { el.classList.add("ok"); label.textContent = "backend online"; }
     else throw new Error(String(res.status));
-  } catch (e) { el.classList.add("bad"); label.textContent = "backend offline (:8011)"; }
+  } catch (e) { el.classList.add("bad"); label.textContent = "backend offline"; }
+
+  // The season endpoint is public, so populate the chip even on the signed-out
+  // screen (it stays hidden if the fetch fails - no "Season" placeholder).
+  refreshSeason();
 
   try {
     const got = await chrome.storage.local.get([TOKEN_KEY]);

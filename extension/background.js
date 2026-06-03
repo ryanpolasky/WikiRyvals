@@ -22,6 +22,40 @@ try {
   console.warn("sidePanel unavailable", e);
 }
 
+// Restrict the side panel to Wikipedia tabs: enable it there (so the toolbar icon
+// and the in-page pull tab open the lobby), and disable it on every other site so
+// the panel can't be opened off Wikipedia. Driven per-tab by the tab's URL.
+function isWikipediaUrl(url) {
+  try { return /(^|\.)wikipedia\.org$/i.test(new URL(url).hostname); }
+  catch (_) { return false; }
+}
+async function syncPanelForTab(tabId, url) {
+  if (!(chrome.sidePanel && chrome.sidePanel.setOptions)) return;
+  try {
+    if (isWikipediaUrl(url)) {
+      await chrome.sidePanel.setOptions({ tabId, path: "lobby.html", enabled: true });
+    } else {
+      await chrome.sidePanel.setOptions({ tabId, enabled: false });
+    }
+  } catch (_) { /* tab probably closed */ }
+}
+try {
+  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if ((info.status === "complete" || info.url) && tab && tab.url) syncPanelForTab(tabId, tab.url);
+  });
+  chrome.tabs.onActivated.addListener(({ tabId }) => {
+    chrome.tabs.get(tabId, (tab) => {
+      if (!chrome.runtime.lastError && tab && tab.url) syncPanelForTab(tabId, tab.url);
+    });
+  });
+  // Catch tabs already open when the service worker starts.
+  chrome.tabs.query({}, (tabs) => (tabs || []).forEach((t) => {
+    if (t.id != null && t.url) syncPanelForTab(t.id, t.url);
+  }));
+} catch (e) {
+  console.warn("sidePanel per-tab gating unavailable", e);
+}
+
 async function getRace() {
   const obj = await chrome.storage.local.get(RACE_KEY);
   return obj[RACE_KEY] || null;
@@ -99,7 +133,44 @@ async function reportVisit(title, links) {
   return data;
 }
 
+// Track whether the side panel is open via a presence port the lobby connects on
+// load, so the in-page pull tab can TOGGLE it shut (Chrome has no
+// sidePanel.close(), so the panel closes itself when asked).
+let panelPort = null;
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "rwr-panel") return;
+  panelPort = port;
+  port.onDisconnect.addListener(() => { if (panelPort === port) panelPort = null; });
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Open the side panel synchronously, still inside the content script's click
+  // gesture - chrome.sidePanel.open() requires a user gesture, so we must not
+  // await anything before calling it (that's why this is handled before the
+  // async block below).
+  if (msg && msg.type === "openSidePanel") {
+    // Already open? Toggle it shut - it closes itself over the presence port.
+    if (panelPort) {
+      try { panelPort.postMessage({ type: "close" }); } catch (_) {}
+      sendResponse({ ok: true });
+      return;
+    }
+    try {
+      if (!(chrome.sidePanel && chrome.sidePanel.open)) {
+        throw new Error("sidePanel.open unavailable (needs Chrome 116+)");
+      }
+      const tab = sender && sender.tab;
+      const opts = tab && tab.windowId != null
+        ? { windowId: tab.windowId }
+        : { tabId: tab && tab.id };
+      chrome.sidePanel.open(opts);
+      sendResponse({ ok: true });
+    } catch (e) {
+      console.warn("openSidePanel failed", e);
+      sendResponse({ ok: false, error: String(e) });
+    }
+    return; // handled synchronously; don't fall through to the async block
+  }
   (async () => {
     try {
       if (msg.type === "newRace") {

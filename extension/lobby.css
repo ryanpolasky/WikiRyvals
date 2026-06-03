@@ -39,6 +39,9 @@ body.light {
 }
 
 * { box-sizing: border-box; }
+/* Hide scrollbars panel-wide (scrolling still works). */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+::-webkit-scrollbar { width: 0; height: 0; display: none; }
 html, body { height: 100%; }
 body.panel {
   margin: 0;
@@ -81,13 +84,8 @@ body.panel {
   font-size: 20px; font-weight: 700; letter-spacing: .2px; line-height: 1.1;
 }
 .tagline { color: var(--muted); font-size: 11px; }
-.theme-toggle {
-  margin-left: auto; width: 30px; height: 30px; flex: none; padding: 0;
-  display: grid; place-items: center; font-size: 14px; line-height: 1;
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--line); border-radius: 9px; cursor: pointer;
-}
-.theme-toggle:hover { background: var(--surface-2); }
+/* Right-aligned tools cluster (just the season pill now). */
+.brand-bar .brand-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .season-chip {
   margin-left: 8px; font-size: 10px; font-weight: 700; color: var(--text);
   background: var(--surface); border: 1px solid var(--line);
@@ -107,7 +105,7 @@ body.panel {
   display: grid; place-items: center; font-weight: 800; font-size: 12px; color: var(--blue);
 }
 .avatar-lg { width: 52px; height: 52px; border-radius: 13px; font-size: 18px; }
-.me-name { font-weight: 700; font-size: 13px; }
+.me-name { font-weight: 700; font-size: 13px; margin-bottom: 3px; }
 .me-rank { color: var(--muted); font-size: 12px; }
 .rd { color: #6b7280; }
 
@@ -136,6 +134,7 @@ body.panel {
 .card.feature { background: linear-gradient(180deg, rgba(51,102,204,.10), rgba(102,153,255,.04)), var(--surface); border-color: #28406e; }
 body.light .card.feature { border-color: #bcd0f5; }
 .card.muted-card { opacity: .9; }
+#view-friends .card { padding-bottom: 9px; } /* tighter bottom on the friends cards */
 .card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .card-top h3 { margin: 0; font-size: 14px; }
 .card p { color: var(--muted); margin: 0 0 10px; font-size: 12px; }
@@ -154,6 +153,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 .row-actions { display: flex; gap: 8px; margin-bottom: 11px; }
 .hint { margin: 6px 2px 0; color: var(--muted); min-height: 16px; font-size: 12px; }
+.hint:empty { min-height: 0; margin: 0; } /* don't reserve bottom space with no message */
 .hint.err { color: var(--orange); }
 .hint.ok { color: var(--green); }
 .preview-tag { color: var(--muted); font-size: 11px; margin: 10px 2px 0; }
@@ -161,6 +161,17 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ===== Lists (rooms / leaderboard / history) ===== */
 .list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+/* Board & history fill the panel so an empty/loading message centers both axes
+   instead of sitting in a small box at the top. (:not(.hidden) keeps the ID
+   selector from out-prioritizing .view.hidden's display:none.) */
+#view-leaderboard:not(.hidden), #view-history:not(.hidden) {
+  display: flex; flex-direction: column; min-height: 100%;
+}
+#view-leaderboard .list, #view-history .list { flex: 0 0 auto; }
+.list.is-empty {
+  flex: 1; border: none; display: flex; align-items: center; justify-content: center;
+}
+.list.is-empty .preview-tag { margin: 0; max-width: 240px; }
 .li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .li:first-child { border-top: none; }
 .li-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
@@ -195,7 +206,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ===== Profile ===== */
 .profile-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.profile-name { font-size: 16px; font-weight: 800; }
+.profile-name { font-size: 16px; font-weight: 800; margin-bottom: 3px; }
 .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .stat { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 6px; text-align: center; }
 .stat-n { font-size: 17px; font-weight: 800; }
@@ -471,7 +482,31 @@ body.light .vs-avatar { background: var(--bg-2); color: var(--blue); border-colo
   padding: 2px 6px; border-radius: 999px; color: #fff; border: none;
   background: var(--grad);
 }
-.cbadge-beta { background: linear-gradient(135deg, #a06bff, #5b6bff); }
+/* Beta Tester: a gently drifting purple-blue-cyan gradient (the tasteful one). */
+.cbadge-beta {
+  background: linear-gradient(120deg, #a06bff, #5b6bff, #00d4ff);
+  background-size: 200% 100%;
+  animation: cbadge-beta-flow 6s ease-in-out infinite;
+}
+@keyframes cbadge-beta-flow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+/* Creator: the flashy one - a flowing rainbow with a soft glow. */
+.cbadge-creator {
+  background: linear-gradient(90deg, #ff5e62, #ff9966, #ffd166, #42e695, #4f9fff, #b06bff, #ff5e62);
+  background-size: 250% 100%;
+  animation: cbadge-creator-flow 5s linear infinite;
+  box-shadow: 0 0 10px rgba(124, 92, 255, .45);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, .35);
+}
+@keyframes cbadge-creator-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 250% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cbadge-beta, .cbadge-creator { animation: none; }
+}
 .promo-note {
   font-size: 12px; line-height: 1.45; text-align: left;
   padding: 10px 12px; border-radius: 11px; margin-bottom: 12px;
