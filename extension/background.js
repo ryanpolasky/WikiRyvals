@@ -9,6 +9,54 @@ importScripts("config.js");
 const BACKEND = globalThis.WIKIRYVALS_BACKEND;
 const RACE_KEY = "race";
 
+// ---- Match-safe auto-update -------------------------------------------------
+// Chrome applies a downloaded extension update the next time this service worker
+// shuts down, and that restart reloads the side panel and kills the live match
+// WebSocket (it lives in the panel, not here). So while a multiplayer match is in
+// progress we keep the worker awake, which defers the update, then apply it with
+// chrome.runtime.reload() the instant the match ends - a clean swap at the lobby.
+// Solo races run in a normal tab and don't need this, so the panel only holds
+// during ranked/duo matches.
+let UPDATE_PENDING = false;
+let MATCH_HOLD = false;
+let KEEPALIVE = null;
+let HOLD_CAP = null;
+const HOLD_CAP_MS = 15 * 60 * 1000;  // safety release if a match never signals its end
+
+function startKeepAlive() {
+  if (KEEPALIVE) return;
+  // A periodic extension-API call resets the worker's ~30s idle timer, so a
+  // pending update can't be applied out from under an active match.
+  KEEPALIVE = setInterval(() => {
+    try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError); }
+    catch (_) {}
+  }, 20000);
+}
+function stopKeepAlive() {
+  if (KEEPALIVE) { clearInterval(KEEPALIVE); KEEPALIVE = null; }
+}
+function setMatchHold(active) {
+  active = !!active;
+  if (active === MATCH_HOLD) return;
+  MATCH_HOLD = active;
+  if (active) {
+    startKeepAlive();
+    if (HOLD_CAP) clearTimeout(HOLD_CAP);
+    HOLD_CAP = setTimeout(() => setMatchHold(false), HOLD_CAP_MS);
+  } else {
+    if (HOLD_CAP) { clearTimeout(HOLD_CAP); HOLD_CAP = null; }
+    stopKeepAlive();
+    // Match's over: apply a deferred update now (a no-op when none is waiting).
+    if (UPDATE_PENDING) { try { chrome.runtime.reload(); } catch (_) {} }
+  }
+}
+chrome.runtime.onUpdateAvailable.addListener(() => {
+  // Update is downloaded but not yet applied because the worker is running. If a
+  // match is holding the worker awake, setMatchHold(false) applies it on match
+  // end; otherwise the worker idles out shortly and Chrome applies it then.
+  UPDATE_PENDING = true;
+});
+
 // Clicking the toolbar icon opens the WikiRyvals lobby as a docked side panel,
 // so it sits beside live Wikipedia instead of replacing it. Guarded so a missing
 // sidePanel API (older Chrome) can never abort the message listener below.
@@ -175,6 +223,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "clearRace") {
         await clearRace();
         sendResponse({ ok: true });
+      } else if (msg.type === "matchHold") {
+        sendResponse({ ok: true });
+        setMatchHold(!!msg.active);
       } else {
         sendResponse({ ok: false, error: "unknown message" });
       }

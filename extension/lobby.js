@@ -839,6 +839,10 @@ function enterRacing(match) {
   }
   showOnly("screen-racing");
 
+  // Hold off any pending extension auto-update until this match ends, so applying
+  // it can't reload the panel and drop the live match socket mid-race.
+  bg("matchHold", { active: true });
+
   // Primary path: a WebSocket to the match relays the opponent's live position
   // and the final result the instant the match decides (no polling lag).
   openMatchSocket(match);
@@ -1044,6 +1048,8 @@ function showResult(r) {
   }
 
   showOnly("screen-result");
+  // Celebrate a win (1v1, 2v2 or private). Promotions still stack the rank-up overlay on top.
+  if (won && !draw) fireConfetti();
 }
 
 function celebrateRankUp(name, slug, promoWin, division) {
@@ -1057,6 +1063,73 @@ function celebrateRankUp(name, slug, promoWin, division) {
   ov.hidden = false;
   // Re-trigger the entrance animation if it fires twice in a session.
   ov.classList.remove("show"); void ov.offsetWidth; ov.classList.add("show");
+}
+
+// Lightweight, dependency-free confetti burst. Honors reduced-motion; the canvas
+// is fixed, click-through, and self-removes once the particles settle.
+function fireConfetti(opts) {
+  opts = opts || {};
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  } catch (_) {}
+  const root = opts.root || document.body || document.documentElement;
+  if (!root) return;
+  const colors = opts.colors || ["#f0883e", "#6699ff", "#ffd166", "#3fb950", "#e8eaed"];
+  const cv = document.createElement("canvas");
+  cv.style.cssText =
+    "position:fixed;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;" +
+    "background:transparent;pointer-events:none;z-index:" + (opts.z || 9999) + ";";
+  root.appendChild(cv);
+  const ctx = cv.getContext("2d");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W = (cv.width = Math.floor(window.innerWidth * dpr));
+  let H = (cv.height = Math.floor(window.innerHeight * dpr));
+  const onResize = () => {
+    W = cv.width = Math.floor(window.innerWidth * dpr);
+    H = cv.height = Math.floor(window.innerHeight * dpr);
+  };
+  window.addEventListener("resize", onResize);
+  const cx = (opts.originX != null ? opts.originX : 0.5) * W;
+  const cy = (opts.originY != null ? opts.originY : 0.34) * H;
+  const parts = [];
+  const N = opts.count || 150;
+  for (let i = 0; i < N; i++) {
+    const ang = -Math.PI / 2 + (Math.random() - 0.5) * 1.7;
+    const spd = (5 + Math.random() * 11) * dpr;
+    parts.push({
+      x: cx + (Math.random() - 0.5) * 80 * dpr, y: cy,
+      vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+      g: (0.15 + Math.random() * 0.12) * dpr,
+      w: (5 + Math.random() * 6) * dpr, h: (8 + Math.random() * 7) * dpr,
+      rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.35,
+      color: colors[(Math.random() * colors.length) | 0],
+      life: 0, ttl: 95 + Math.random() * 45,
+    });
+  }
+  let raf = 0, frame = 0;
+  const step = () => {
+    frame++;
+    ctx.clearRect(0, 0, W, H);
+    let alive = 0;
+    for (const p of parts) {
+      if (p.life > p.ttl) continue;
+      p.life++; alive++;
+      p.vy += p.g; p.vx *= 0.99;
+      p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - p.life / p.ttl);
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (alive && frame < 260) { raf = requestAnimationFrame(step); }
+    else { window.removeEventListener("resize", onResize); cv.remove(); }
+  };
+  raf = requestAnimationFrame(step);
+  setTimeout(() => {
+    try { cancelAnimationFrame(raf); window.removeEventListener("resize", onResize); cv.remove(); } catch (_) {}
+  }, 6000);
 }
 $("rankup-dismiss").addEventListener("click", () => { $("rankup-overlay").hidden = true; });
 $("rankup-overlay").addEventListener("click", (e) => {
@@ -1197,6 +1270,7 @@ function backToLobby() {
   closeMatchSocket();
   CURRENT_MATCH = null;
   bg("clearRace");
+  bg("matchHold", { active: false });  // match over, so a pending update can now apply
   showApp();
   showView("play");
   refreshMe();  // pick up RP / promo-state changes from the match just played

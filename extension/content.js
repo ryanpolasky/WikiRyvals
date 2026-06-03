@@ -180,7 +180,7 @@ function ensureHud() {
     <div class="rwr-stats">
       <span><b id="rwr-clicks">0</b> clicks</span>
       <span><b id="rwr-timer">0.0s</b></span>
-      <span id="rwr-par-wrap">par <b id="rwr-par">–</b></span>
+      <span id="rwr-par-wrap">par <b id="rwr-par">-</b></span>
     </div>
     <div class="rwr-actions">
       <label class="theme-switch" id="rwr-theme-switch" title="Toggle light / dark">
@@ -312,6 +312,73 @@ function pathChips(path, target) {
     .join("");
 }
 
+// Lightweight, dependency-free confetti burst. Honors reduced-motion; the canvas
+// is fixed, click-through, and self-removes once the particles settle.
+function fireConfetti(opts) {
+  opts = opts || {};
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  } catch (_) {}
+  const root = opts.root || document.body || document.documentElement;
+  if (!root) return;
+  const colors = opts.colors || ["#f0883e", "#6699ff", "#ffd166", "#3fb950", "#e8eaed"];
+  const cv = document.createElement("canvas");
+  cv.style.cssText =
+    "position:fixed;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;" +
+    "background:transparent;pointer-events:none;z-index:" + (opts.z || 2147483647) + ";";
+  root.appendChild(cv);
+  const ctx = cv.getContext("2d");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W = (cv.width = Math.floor(window.innerWidth * dpr));
+  let H = (cv.height = Math.floor(window.innerHeight * dpr));
+  const onResize = () => {
+    W = cv.width = Math.floor(window.innerWidth * dpr);
+    H = cv.height = Math.floor(window.innerHeight * dpr);
+  };
+  window.addEventListener("resize", onResize);
+  const cx = (opts.originX != null ? opts.originX : 0.5) * W;
+  const cy = (opts.originY != null ? opts.originY : 0.34) * H;
+  const parts = [];
+  const N = opts.count || 150;
+  for (let i = 0; i < N; i++) {
+    const ang = -Math.PI / 2 + (Math.random() - 0.5) * 1.7;
+    const spd = (5 + Math.random() * 11) * dpr;
+    parts.push({
+      x: cx + (Math.random() - 0.5) * 80 * dpr, y: cy,
+      vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+      g: (0.15 + Math.random() * 0.12) * dpr,
+      w: (5 + Math.random() * 6) * dpr, h: (8 + Math.random() * 7) * dpr,
+      rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.35,
+      color: colors[(Math.random() * colors.length) | 0],
+      life: 0, ttl: 95 + Math.random() * 45,
+    });
+  }
+  let raf = 0, frame = 0;
+  const step = () => {
+    frame++;
+    ctx.clearRect(0, 0, W, H);
+    let alive = 0;
+    for (const p of parts) {
+      if (p.life > p.ttl) continue;
+      p.life++; alive++;
+      p.vy += p.g; p.vx *= 0.99;
+      p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - p.life / p.ttl);
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (alive && frame < 260) { raf = requestAnimationFrame(step); }
+    else { window.removeEventListener("resize", onResize); cv.remove(); }
+  };
+  raf = requestAnimationFrame(step);
+  setTimeout(() => {
+    try { cancelAnimationFrame(raf); window.removeEventListener("resize", onResize); cv.remove(); } catch (_) {}
+  }, 6000);
+}
+
 function renderWin(race) {
   let ov = document.getElementById("rwr-win");
   if (!ov) {
@@ -373,6 +440,8 @@ function renderWin(race) {
       });
     } catch (_) {}
   }
+  // Celebrate a clean, par-or-better solo run - the only "special" solo finish.
+  if (clean && v.cls === "great") fireConfetti({ root: document.documentElement });
 }
 
 function applyRaceMode(active) {
