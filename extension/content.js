@@ -19,11 +19,16 @@ const RWR_NON_ARTICLE = new Set([
   "user_talk", "wikt", "s", "q", "commons",
 ]);
 
-// Page chrome whose links don't count as playable hops (mirrors wiki.py strip).
+// Anchors that are NOT real article navigation: citations/footnotes, "[edit]"
+// pencils, and message-box boilerplate. We intentionally KEEP navboxes and
+// hatnotes - on live Wikipedia those are real, clickable article links a racer
+// can legally use, so excluding them made the anti-cheat flag perfectly legal
+// hops ("that link wasn't on the page"). This set is the basis the backend
+// validates moves against, so it must match what the player can actually click.
 const RWR_SKIP_SEL = [
-  ".navbox", ".vertical-navbox", ".metadata", ".mw-references", ".reflist",
-  ".reference", ".noprint", ".mw-editsection", ".hatnote", ".ambox",
-  ".sistersitebox", ".side-box", ".mw-empty-elt", "sup",
+  ".metadata", ".mw-references", ".reflist", ".reference", ".noprint",
+  ".mw-editsection", ".ambox", ".sistersitebox", ".side-box",
+  ".mw-empty-elt", "sup",
 ].join(",");
 
 function hrefToTitle(href) {

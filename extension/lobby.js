@@ -77,7 +77,9 @@ async function api(path, { method = "GET", body = null, auth = false } = {}) {
   try { data = await res.json(); } catch (_) { /* non-json */ }
   if (!res.ok) {
     const detail = (data && data.detail) || `HTTP ${res.status}`;
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = res.status;  // let callers tell a dead session (401/403) from a hiccup
+    throw err;
   }
   return data;
 }
@@ -1283,18 +1285,13 @@ function hint(msg, kind) {
   h.textContent = msg || "";
   h.className = "hint" + (kind ? " " + kind : "");
 }
-async function startSolo(opts) {
-  hint("Starting race…");
-  try {
-    let race = null;
-    const resp = await bg("newRace", Object.assign({ newTab: true }, opts));
-    if (resp && resp.ok && resp.race) race = resp.race;
-    else race = await startRaceDirect(opts.difficulty, opts.start, opts.target);
-    if (race && race.race_id) hint(`Race started: ${race.start} → ${race.target}. Opened in a new tab, go race!`, "ok");
-    else hint("Couldn't start a race. The backend may be unavailable.", "err");
-  } catch (e) {
-    hint("Couldn't start a race. The backend may be unavailable.", "err");
-  }
+function startSolo(opts) {
+  // Kick off the race in a new tab, then collapse the panel so the player focuses
+  // on the article. We fire-and-close instead of awaiting: opening the race tab
+  // reloads this panel mid-await anyway, so closing up front is the clean hand-off.
+  // The result shows in-page (content.js), so the panel isn't needed during a solo run.
+  bg("newRace", Object.assign({ newTab: true }, opts));
+  window.close();
 }
 $("qm-go").addEventListener("click", () => startSolo({ difficulty: $("qm-diff").value }));
 $("daily-go").addEventListener("click", startDaily);
@@ -1348,19 +1345,11 @@ async function refreshDaily() {
   }
 }
 
-async function startDaily() {
+function startDaily() {
   if (!ME) { showScreenAuth(); return; }
-  hint("Starting today's daily…");
-  try {
-    const resp = await bg("dailyRace", { token: TOKEN, newTab: true });
-    if (resp && resp.ok && resp.race) {
-      hint(`Daily: ${resp.race.start} → ${resp.race.target}. Opened in a new tab, go race!`, "ok");
-    } else {
-      hint("Couldn't start the daily. Is the backend running?", "err");
-    }
-  } catch (e) {
-    hint("Couldn't start the daily. Is the backend running?", "err");
-  }
+  // Fire-and-close so the sidebar collapses cleanly onto the race tab (see startSolo).
+  bg("dailyRace", { token: TOKEN, newTab: true });
+  window.close();
 }
 
 async function toggleDailyBoard() {
@@ -1409,19 +1398,11 @@ async function refreshWeekly() {
   }
 }
 
-async function startWeekly() {
+function startWeekly() {
   if (!ME) { showScreenAuth(); return; }
-  hint("Starting this week's puzzle…");
-  try {
-    const resp = await bg("weeklyRace", { token: TOKEN, newTab: true });
-    if (resp && resp.ok && resp.race) {
-      hint(`Weekly: ${resp.race.start} → ${resp.race.target}. Opened in a new tab, go race!`, "ok");
-    } else {
-      hint("Couldn't start the weekly puzzle. Is the backend running?", "err");
-    }
-  } catch (e) {
-    hint("Couldn't start the weekly puzzle. Is the backend running?", "err");
-  }
+  // Fire-and-close so the sidebar collapses cleanly onto the race tab (see startSolo).
+  bg("weeklyRace", { token: TOKEN, newTab: true });
+  window.close();
 }
 
 async function toggleWeeklyBoard() {
@@ -1615,8 +1596,24 @@ async function loadProfile() {
   } catch (_) {}
 
   if (TOKEN) {
-    try { ME = (await api("/api/ext/me", { auth: true })).user; enterApp(); return; }
-    catch (_) { TOKEN = null; try { await chrome.storage.local.remove(TOKEN_KEY); } catch (_) {} }
+    // Validate the saved session. Only a real auth rejection (401/403) should sign
+    // the player out; a transient network/backend hiccup - which can happen while the
+    // side panel reloads as a race opens in a new tab - must NOT wipe the token, or
+    // they get bounced to the login screen mid-session. Retry a couple times first.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        ME = (await api("/api/ext/me", { auth: true })).user;
+        enterApp();
+        return;
+      } catch (e) {
+        if (e && (e.status === 401 || e.status === 403)) {
+          TOKEN = null;
+          try { await chrome.storage.local.remove(TOKEN_KEY); } catch (_) {}
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      }
+    }
   }
   authStep("auth-email-step");
   showScreenAuth();

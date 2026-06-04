@@ -217,24 +217,6 @@ def _sweep_races(force: bool = False) -> None:
         EXT_RACES.pop(rid, None)
 
 
-def _known_links(race: ExtRace, page: str) -> set[str] | None:
-    """Best link set for `page` WITHOUT calling Wikipedia, in priority order:
-    (1) what the content script reported when the player was on that page,
-    (2) the play graph (built from prior real play),
-    (3) the frozen snapshot adjacency. None if we genuinely don't know it yet.
-    """
-    seen = race.links_seen.get(page)
-    if seen:
-        return set(seen)
-    pg = play_graph.links_of(page)
-    if pg:
-        return set(pg)
-    snap = store.adjacency.get(page)
-    if snap:
-        return set(snap)
-    return None
-
-
 def _merged_neighbors(node: str) -> set[str]:
     """Out-links for `node` from the play-built graph unioned with the snapshot.
     The play graph grows from real play (no API crawl), so par self-improves
@@ -377,13 +359,18 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     if title == race.current:
         return _ext_state(race)
 
-    # Validate the hop against the previous page's known links WITHOUT fetching
-    # Wikipedia (client report → play graph → snapshot). If we genuinely have no
-    # record of that page yet, we can't prove the hop illegal, so we accept it
-    # but mark it unverified rather than paying for a live fetch on the hot path.
-    known = _known_links(race, race.current)
-    verified = known is not None
-    legal = (title in known) if verified else True
+    # Judge the hop ONLY against what the content script actually saw on the page
+    # the player just left. That live observation is the page they really clicked
+    # through, so it's the single trustworthy basis for accusing a hop of being
+    # illegal. We deliberately do NOT fall back to the frozen snapshot or the
+    # play-graph here: both are incomplete (induced subgraph, stale crawl, navboxes
+    # stripped), so flagging against them produces false positives on perfectly
+    # legal links they don't happen to contain. With no observation of the previous
+    # page yet (e.g. a fast hop whose visit never landed), we accept it as unverified
+    # rather than wrongly flag a clean run.
+    seen_prev = race.links_seen.get(race.current)
+    verified = seen_prev is not None
+    legal = (title in set(seen_prev)) if verified else True
     race.path.append(title)
     race.current = title
     if not legal:
