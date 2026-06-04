@@ -23,6 +23,9 @@ __pycache__/
 # Regenerable via store-assets/render.ps1 and uploaded to the store by hand.
 /store-assets/
 
+# Packaged extension builds (the zip uploaded to the Web Store / shared for testing).
+/dist/
+
 # Personal ramblings of what I wanna build next :)
 /docs
 
