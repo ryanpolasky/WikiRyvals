@@ -169,6 +169,7 @@ html.rwr-on .fundraising-banner {
   border-radius: 2px; padding: 5px 10px; font-size: 13px; cursor: pointer;
 }
 #rwr-hud #rwr-new { background: var(--rwr-accent); color: var(--rwr-accent-ink); font-weight: 700; border: none; }
+#rwr-hud #rwr-new.rwr-danger { background: #d83a3a; color: #fff; }
 #rwr-hud .rwr-flash {
   position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
   background: #5a1d1d; color: #ffd9d9; border: 1px solid #a33;

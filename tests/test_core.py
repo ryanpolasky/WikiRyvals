@@ -12,7 +12,7 @@ from wikirace.graph import (
     shortest_hops,
     shortest_hops_via,
 )
-from wikirace.matchmaking import GHOST_AFTER_SECONDS, MatchMaker
+from wikirace.matchmaking import GRACE_MS, MatchMaker, Side, _score
 from wikirace.play_graph import PlayGraph
 from wikirace.ranks import (
     FEATURED_RP,
@@ -225,39 +225,74 @@ def test_poll_reports_searching_count():
     assert mm.poll(t1.ticket_id)["searching"] == 2
 
 
-def test_matchmaking_ghost_fallback_for_solo():
+def test_matchmaking_solo_keeps_searching_without_opponent():
     mm = _mm()
     t = mm.enqueue(_user("solo", 1500), "any")
-    # Simulate having waited past the ghost threshold.
-    mm._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
-    out = mm.poll(t.ticket_id)
-    assert out["status"] == "found"
-    assert out["match"]["opponent"]["is_bot"] is True
+    # No bot/ghost fallback: even after a long wait, a lone queuer never matches.
+    mm._tickets[t.ticket_id].enqueued_at -= 600
+    mm.poll(t.ticket_id)
+    assert mm._tickets[t.ticket_id].match_id is None
+    assert mm._tickets[t.ticket_id].status == "searching"
 
 
 def test_matchmaking_resolves_faster_finisher_as_winner():
     mm = _mm()
-    t = mm.enqueue(_user("solo", 1500), "any")
-    mm._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
-    match = mm.poll(t.ticket_id)["match"]
-    mid = match["match_id"]
-    opp_time = match["opponent"]["time_ms"] or 99999
-    res = mm.submit(mid, "solo", finished=True, clicks=2,
-                    time_ms=max(1, opp_time - 1000), flagged=False)
+    t1 = mm.enqueue(_user("u1", 1500), "any")
+    mm.enqueue(_user("u2", 1520), "any")
+    mid = t1.match_id
+    # u2 finishes well behind u1 (outside the grace window) -> u1 wins on time,
+    # even though u1 took more clicks.
+    assert mm.submit(mid, "u2", finished=True, clicks=2,
+                     time_ms=60000, flagged=False) is None
+    res = mm.submit(mid, "u1", finished=True, clicks=4,
+                    time_ms=10000, flagged=False)
     assert res is not None
-    a = res["a"] if res["a"]["side"].user_id == "solo" else res["b"]
+    a = res["a"] if res["a"]["side"].user_id == "u1" else res["b"]
     assert a["score"] == 1.0                # finished faster -> win
 
 
 def test_matchmaking_flagged_finish_cannot_win():
     mm = _mm()
-    t = mm.enqueue(_user("solo", 1500), "any")
-    mm._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
-    match = mm.poll(t.ticket_id)["match"]
-    res = mm.submit(match["match_id"], "solo", finished=True, clicks=2,
-                    time_ms=1, flagged=True)
-    me = res["a"] if res["a"]["side"].user_id == "solo" else res["b"]
+    t1 = mm.enqueue(_user("u1", 1500), "any")
+    mm.enqueue(_user("u2", 1520), "any")
+    mid = t1.match_id
+    assert mm.submit(mid, "u2", finished=True, clicks=5,
+                     time_ms=50000, flagged=False) is None
+    # u1 is fastest AND fewest clicks, but flagged -> still can't win.
+    res = mm.submit(mid, "u1", finished=True, clicks=2, time_ms=1, flagged=True)
+    me = res["a"] if res["a"]["side"].user_id == "u1" else res["b"]
     assert me["score"] != 1.0               # flagged run can't be a win
+
+
+def _gside(uid, *, finished=True, clicks=3, time_ms=10000, flagged=False):
+    return Side(user_id=uid, username=uid, rating=Rating(1500), rp=0,
+                finished=finished, clicks=clicks, time_ms=time_ms, flagged=flagged)
+
+
+def test_grace_window_fewer_clicks_steals_within_window():
+    # opp finished ~10s sooner, but I took the tighter route -> I steal it.
+    me = _gside("me", clicks=3, time_ms=20000)
+    opp = _gside("opp", clicks=6, time_ms=10000)
+    assert abs(me.time_ms - opp.time_ms) <= GRACE_MS
+    assert _score(me, opp) == 1.0
+    assert _score(opp, me) == 0.0
+
+
+def test_grace_window_same_clicks_faster_wins():
+    # Within the window but tied on clicks -> the faster finisher wins.
+    me = _gside("me", clicks=4, time_ms=10000)
+    opp = _gside("opp", clicks=4, time_ms=20000)
+    assert _score(me, opp) == 1.0
+    assert _score(opp, me) == 0.0
+
+
+def test_grace_window_missed_window_decided_on_time():
+    # opp finished >GRACE_MS sooner: my fewer clicks don't matter, I was too slow.
+    me = _gside("me", clicks=2, time_ms=40000)
+    opp = _gside("opp", clicks=9, time_ms=10000)
+    assert abs(me.time_ms - opp.time_ms) > GRACE_MS
+    assert _score(me, opp) == 0.0
+    assert _score(opp, me) == 1.0
 
 
 def test_private_lobby_create_and_join_starts_match():

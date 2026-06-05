@@ -1,4 +1,4 @@
-"""In-memory matchmaking: ranked queue, async ghost fallback, and private lobbies.
+"""In-memory matchmaking: ranked queue and private lobbies.
 
 The matchmaker is intentionally stateless-on-disk (live state only) - durable
 things (ratings, RP, match history) are written by the caller via the account
@@ -6,21 +6,18 @@ store once a match resolves. This module just owns the *live* head-to-head:
 
   * **Ranked queue** - players enqueue with their rating/region/difficulty; we
     pair the closest-rated compatible opponent, widening the rating window the
-    longer someone waits so a small pool never deadlocks.
-  * **Ghost fallback** - if no human appears within a few seconds, we
-    synthesize an *async ghost*: a recorded-style run by a similarly-rated
-    phantom so a solo player still gets a real "match found" and a result. Ghost
-    games are clearly flagged ``is_bot`` so the UI can mark them.
+    longer someone waits so a small pool still pairs. A solo player just keeps
+    searching until a real opponent shows up - there are no bot/ghost opponents.
   * **Private lobbies** - code-based (create -> 6-char code -> opponent joins by
     code), no friends list. Private matches are unranked.
 
-Resolution rule (both modes): a clean finisher beats a DNF; if both finish, the
-faster wall-clock wins (tiebreak: fewer clicks); a flagged finish cannot win.
+Resolution rule (both modes): a clean finisher beats a DNF; if both finish within
+GRACE_MS of each other the tighter route wins (fewer clicks, tiebreak faster
+time), otherwise the faster wall-clock wins; a flagged finish cannot win.
 """
 
 from __future__ import annotations
 
-import random
 import secrets
 import string
 import threading
@@ -34,12 +31,14 @@ from .glicko2 import Rating
 RATING_WINDOW_START = 120.0
 RATING_WINDOW_GROWTH = 45.0       # per second waited
 RATING_WINDOW_MAX = 1400.0
-# How long a solo player waits before we give them a ghost.
-GHOST_AFTER_SECONDS = 8.0
 # Live-state TTLs so memory stays flat on an always-on box.
 TICKET_TTL = 120.0
 MATCH_TTL = 1800.0
 LOBBY_TTL = 1800.0
+# Grace window: once one side finishes, the trailing player can still win by
+# reaching the target with *fewer clicks*, provided they finish within this many
+# ms of the first finisher (a GeoGuessr-style "you've still got a few seconds").
+GRACE_MS = 15_000
 
 PromptPicker = Callable[[str | None], dict | None]
 ParFn = Callable[[str, str], "int | None"]
@@ -115,7 +114,7 @@ class Match:
     target: str
     par: int
     a: Side                   # the enqueuing player (or host)
-    b: Side                   # opponent (human or ghost)
+    b: Side                   # opponent
     created_at: float = field(default_factory=time.monotonic)
     countdown_start: float = field(default_factory=time.time)
     resolved: bool = False
@@ -286,8 +285,6 @@ class MatchMaker:
                 return {"status": "expired"}
             if t.status == "searching":
                 self._try_match()
-                if t.status == "searching" and self._waited(t) >= GHOST_AFTER_SECONDS:
-                    self._make_ghost_match(t)
             out: dict = {"status": t.status, "waited_ms": int(self._waited(t) * 1000),
                          "searching": sum(1 for x in self._tickets.values()
                                           if x.status == "searching")}
@@ -357,23 +354,6 @@ class MatchMaker:
         for t in (a, b):
             t.status = "found"
             t.match_id = match.match_id
-
-    def _make_ghost_match(self, t: Ticket) -> None:
-        difficulty = self._resolve_difficulty(t)
-        start, target, par = self._prompt(difficulty)
-        ghost = _make_ghost(t.rating, t.rp, par)
-        match = Match(
-            match_id=uuid_hex(),
-            mode="ranked",
-            difficulty=difficulty,
-            start=start, target=target, par=par,
-            a=Side(t.user_id, t.username, t.rating, t.rp, t.region, tags=t.tags),
-            b=ghost,
-        )
-        self._matches[match.match_id] = match
-        self._save(match)
-        t.status = "found"
-        t.match_id = match.match_id
 
     def _prompt(self, difficulty: str) -> tuple[str, str, int]:
         p = self._pick(difficulty) or self._pick("any") or {
@@ -457,6 +437,32 @@ class MatchMaker:
                 "difficulty": lobby.difficulty,
             }
 
+    def create_duel(self, host: dict, guest: dict, difficulty: str) -> Match:
+        """Create a casual (private, unranked) 1v1 match directly between two
+        friends - the invite-based equivalent of a code lobby, so a duel
+        challenge from the friends list drops both straight into a head-to-head."""
+        with self._lock:
+            self._sweep()
+            diff = difficulty or "any"
+            start, target, par = self._prompt(diff if diff != "any" else "medium")
+            match = Match(
+                match_id=uuid_hex(),
+                mode="private",
+                difficulty=diff,
+                start=start, target=target, par=par,
+                a=Side(host["id"], host["username"] or "host",
+                       Rating(host["rating"], host["rd"], host["vol"]),
+                       host["rp"], host.get("region") or "Other",
+                       tags=list(host.get("tags") or [])),
+                b=Side(guest["id"], guest["username"] or "guest",
+                       Rating(guest["rating"], guest["rd"], guest["vol"]),
+                       guest["rp"], guest.get("region") or "Other",
+                       tags=list(guest.get("tags") or [])),
+            )
+            self._matches[match.match_id] = match
+            self._save(match)
+            return match
+
     # ---- shared match lifecycle ------------------------------------------
     def get_match(self, match_id: str, user_id: str | None = None) -> dict | None:
         with self._lock:
@@ -508,9 +514,8 @@ class MatchMaker:
         self, match_id: str, user_id: str, *,
         finished: bool, clicks: int | None, time_ms: int | None, flagged: bool,
     ) -> dict | None:
-        """Record a player's result; return a resolution dict once the match can
-        be decided (both submitted, or the opponent is a ghost). None while still
-        waiting on a human opponent."""
+        """Record a player's result; return a resolution dict once both sides
+        have submitted, or None while still waiting on the opponent."""
         with self._lock:
             m = self._matches.get(match_id)
             if not m:
@@ -525,9 +530,9 @@ class MatchMaker:
             side.time_ms = time_ms
             side.flagged = bool(flagged)
             opp = m.other(side)
-            if not opp.submitted and not opp.is_bot:
+            if not opp.submitted:
                 self._save(m)  # persist the half-submitted state
-                return None  # wait for the human opponent
+                return None  # wait for the opponent to finish
             return self._resolve(m)
 
     def _resolve(self, m: Match) -> dict:
@@ -593,67 +598,31 @@ def _band_for_rating(rating: float) -> str:
 
 
 def _score(me: Side, opp: Side) -> float:
-    """1.0 if `me` beats `opp`, 0.5 draw, 0.0 loss. A flagged finish can't win."""
+    """1.0 if `me` beats `opp`, 0.5 draw, 0.0 loss. A flagged finish can't win.
+
+    Grace window: when both finish cleanly *within GRACE_MS of each other*, the
+    tighter route wins (fewer clicks; tiebreak faster time) - so a player pipped
+    to the target can still take it by having found the shorter path. Finishes
+    further than GRACE_MS apart are decided on time alone: the trailing player
+    missed the window."""
     me_ok = me.finished and not me.flagged
     opp_ok = opp.finished and not opp.flagged
     if me_ok and opp_ok:
-        # Both finished cleanly: faster time wins, tiebreak fewer clicks.
-        if (me.time_ms or 1 << 62) < (opp.time_ms or 1 << 62):
-            return 1.0
-        if (me.time_ms or 0) > (opp.time_ms or 0):
-            return 0.0
-        if (me.clicks or 1 << 62) < (opp.clicks or 1 << 62):
-            return 1.0
-        if (me.clicks or 0) > (opp.clicks or 0):
-            return 0.0
-        return 0.5
+        mt = me.time_ms if me.time_ms is not None else 1 << 62
+        ot = opp.time_ms if opp.time_ms is not None else 1 << 62
+        if abs(mt - ot) <= GRACE_MS:
+            # Photo finish: fewer clicks wins, tiebreak the faster time.
+            mc = me.clicks if me.clicks is not None else 1 << 62
+            oc = opp.clicks if opp.clicks is not None else 1 << 62
+            if mc != oc:
+                return 1.0 if mc < oc else 0.0
+            if mt != ot:
+                return 1.0 if mt < ot else 0.0
+            return 0.5
+        # Outside the window: the faster finisher wins outright.
+        return 1.0 if mt < ot else 0.0
     if me_ok and not opp_ok:
         return 1.0
     if opp_ok and not me_ok:
         return 0.0
     return 0.5  # neither finished cleanly -> draw
-
-
-def _make_ghost(player_rating: Rating, player_rp: int, par: int) -> Side:
-    """Synthesize a similarly-rated async ghost opponent and its recorded result.
-
-    The ghost's rating is jittered around the player's; its run quality (clicks
-    over par, per-hop reading speed) scales with that rating, with a small chance
-    of a slip-up. This gives a believable, beatable opponent for a solo player.
-    """
-    jitter = random.uniform(-90, 90)
-    g_rating = max(800.0, player_rating.rating + jitter)
-    # Skill in [0,1]: higher rating -> closer to par and faster reading.
-    skill = max(0.05, min(0.95, (g_rating - 1000.0) / 1400.0))
-
-    base_par = max(1, par or random.randint(2, 4))
-    # Extra clicks over par: skilled ghosts add fewer.
-    extra = 0
-    r = random.random()
-    if r > 0.55 + 0.35 * skill:
-        extra += 1
-    if r > 0.85 + 0.13 * skill:
-        extra += 1
-    g_clicks = base_par + extra
-
-    # Per-hop reading time: ~5.5s for weak, ~2.2s for strong, plus noise.
-    per_hop = random.uniform(2.2, 5.5) - 2.6 * skill
-    per_hop = max(1.2, per_hop)
-    g_time_ms = int(g_clicks * per_hop * 1000 * random.uniform(0.9, 1.15))
-
-    # Rare ghost DNF so wins feel earned, not guaranteed.
-    finished = random.random() > 0.04
-    name = random.choice(_GHOST_NAMES)
-    return Side(
-        user_id=None, username=name, rating=Rating(g_rating, 90.0, 0.06),
-        rp=max(0, player_rp + int(jitter)), is_bot=True,
-        finished=finished, submitted=True,
-        clicks=g_clicks if finished else None,
-        time_ms=g_time_ms if finished else None,
-    )
-
-
-_GHOST_NAMES = [
-    "quasar", "helix", "nebula", "vortex", "cipher", "echo", "drift", "onyx",
-    "zephyr", "lumen", "raven", "atlas", "comet", "flux", "ember", "sable",
-]

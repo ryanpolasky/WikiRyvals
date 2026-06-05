@@ -121,7 +121,7 @@ async function activeTabId(sender) {
   return tab ? tab.id : null;
 }
 
-async function newRace(difficulty, sender, start, target, newTab) {
+async function newRace(difficulty, sender, start, target, newTab, matchId) {
   let url = `${BACKEND}/api/ext/new?difficulty=${encodeURIComponent(difficulty || "any")}`;
   if (start && target) {
     url += `&start=${encodeURIComponent(start)}&target=${encodeURIComponent(target)}`;
@@ -129,6 +129,9 @@ async function newRace(difficulty, sender, start, target, newTab) {
   const res = await fetch(url, { method: "POST" });
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const data = await res.json();
+  // Tag ranked/duo races with their match_id so the in-page HUD can offer a real
+  // Forfeit instead of a "New race" that would silently abandon the match.
+  if (matchId) data.match_id = matchId;
   await setRace(data);
   // From the lobby side panel we open a fresh Wikipedia tab so the panel stays
   // put; from the in-page HUD we navigate the active tab.
@@ -163,6 +166,19 @@ async function weeklyRace(token, newTab) {
   await setRace(data);
   if (newTab) chrome.tabs.create({ url: data.start_url });
   return data;
+}
+
+async function forfeitMatch(matchId) {
+  // The side panel normally drives ranked results, but the in-page HUD can
+  // forfeit too. Auth goes in the body as `token` (matching the panel's api()).
+  const { wr_token } = await chrome.storage.local.get("wr_token");
+  const res = await fetch(`${BACKEND}/api/ext/mm/result`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: wr_token || "", match_id: matchId, forfeit: true }),
+  });
+  if (!res.ok) throw new Error(`backend ${res.status}`);
+  return await res.json();
 }
 
 async function reportVisit(title, links) {
@@ -211,7 +227,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "newRace") {
-        sendResponse({ ok: true, race: await newRace(msg.difficulty, sender, msg.start, msg.target, msg.newTab) });
+        sendResponse({ ok: true, race: await newRace(msg.difficulty, sender, msg.start, msg.target, msg.newTab, msg.match_id) });
       } else if (msg.type === "dailyRace") {
         sendResponse({ ok: true, race: await dailyRace(msg.token, msg.newTab) });
       } else if (msg.type === "weeklyRace") {
@@ -226,6 +242,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "matchHold") {
         sendResponse({ ok: true });
         setMatchHold(!!msg.active);
+      } else if (msg.type === "forfeitMatch") {
+        sendResponse({ ok: true, result: await forfeitMatch(msg.match_id) });
       } else {
         sendResponse({ ok: false, error: "unknown message" });
       }

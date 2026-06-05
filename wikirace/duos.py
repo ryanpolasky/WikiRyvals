@@ -2,12 +2,12 @@
 
 Solo and 1v1 are the product's core, so rather than generalize the (a, b) match
 model and risk regressing it, duos lives here as its own queue + match type. It
-reuses the 1v1 building blocks (:class:`Side`, ghost synthesis, the rating window,
-the clean-finisher scoring rule) so behaviour stays consistent.
+reuses the 1v1 building blocks (:class:`Side`, the rating window, the clean-
+finisher scoring rule) so behaviour stays consistent.
 
 Grouping: four near-rated players are split into two balanced teams (snake-seed by
-rating). A solo or short queue is filled with ghosts after a short wait so a duos
-search never deadlocks. Team result = the team's *fastest clean finisher*; the
+rating). A duos search needs four real players - it keeps searching until then
+(no bot/ghost fill). Team result = the team's *fastest clean finisher*; the
 team with the lower best time wins (tiebreak fewer clicks), and a flagged finish
 can't clinch it. Durable like 1v1: each live match serializes to the accounts DB
 (tagged ``"kind": "duo"``) and rehydrates on restart.
@@ -22,7 +22,6 @@ from typing import Callable
 
 from .glicko2 import Rating
 from .matchmaking import (
-    GHOST_AFTER_SECONDS,
     MATCH_TTL,
     RATING_WINDOW_GROWTH,
     RATING_WINDOW_MAX,
@@ -32,7 +31,7 @@ from .matchmaking import (
     Ticket,
     _band_for_rating,
     _difficulty_ok,
-    _make_ghost,
+    _score,
     uuid_hex,
 )
 
@@ -111,7 +110,7 @@ class DuoMatch:
 
         def pub(side: Side) -> dict:
             # Include the (opaque) user_id so the live HUD can attribute each
-            # progress event to the right teammate/opponent. Ghosts have none.
+            # progress event to the right teammate/opponent.
             d = side.public()
             d["user_id"] = side.user_id
             return d
@@ -143,20 +142,12 @@ def _team_best(team: list[Side]) -> Side | None:
 
 
 def team_score(team_a: list[Side], team_b: list[Side]) -> float:
-    """A's result vs B: 1.0 win / 0.5 draw / 0.0 loss, by fastest clean finisher."""
+    """A's result vs B: 1.0 win / 0.5 draw / 0.0 loss. Each team is represented by
+    its fastest clean finisher, then the same grace-window rule as 1v1 applies (a
+    rep who finished within GRACE_MS of the other can still win on fewer clicks)."""
     a, b = _team_best(team_a), _team_best(team_b)
     if a is not None and b is not None:
-        if (a.time_ms or 1 << 62) < (b.time_ms or 1 << 62):
-            return 1.0
-        if (a.time_ms or 0) > (b.time_ms or 0):
-            return 0.0
-        a_cl = a.clicks if a.clicks is not None else 1 << 62
-        b_cl = b.clicks if b.clicks is not None else 1 << 62
-        if a_cl < b_cl:
-            return 1.0
-        if a_cl > b_cl:
-            return 0.0
-        return 0.5
+        return _score(a, b)
     if a is not None:
         return 1.0
     if b is not None:
@@ -247,8 +238,6 @@ class DuoMatchMaker:
                 return {"status": "expired"}
             if t.status == "searching":
                 self._try_match()
-                if t.status == "searching" and self._waited(t) >= GHOST_AFTER_SECONDS:
-                    self._fill_with_ghosts(t)
             out: dict = {"status": t.status, "waited_ms": int(self._waited(t) * 1000),
                          "searching": sum(1 for x in self._tickets.values()
                                           if x.status == "searching")}
@@ -326,36 +315,6 @@ class DuoMatchMaker:
                 self._form_match([Side(t.user_id, t.username, t.rating, t.rp, t.region, tags=t.tags)
                                   for t in group], group)
 
-    def _fill_with_ghosts(self, t: Ticket) -> None:
-        """Rescue a waiting search: pull the anchor's party + any other waiting
-        humans (whole units only), fill to four with ghosts, and start."""
-        party = [t]
-        if t.party_id:
-            party += [x for x in self._tickets.values()
-                      if x.status == "searching" and x.ticket_id != t.ticket_id
-                      and x.party_id == t.party_id]
-        party = party[:MATCH_SIZE]
-        taken = {p.ticket_id for p in party}
-        others = [x for x in self._tickets.values()
-                  if x.status == "searching" and x.ticket_id not in taken
-                  and _difficulty_ok(x.difficulty, t.difficulty)]
-        others.sort(key=lambda x: x.enqueued_at)
-        humans = list(party)
-        for unit in self._atomic_units(others):
-            if len(humans) + len(unit) > MATCH_SIZE:
-                continue
-            humans += unit
-            if len(humans) == MATCH_SIZE:
-                break
-        sides = [Side(h.user_id, h.username, h.rating, h.rp, h.region, tags=h.tags) for h in humans]
-        difficulty = self._resolve_difficulty(humans)
-        anchor_rating = t.rating
-        anchor_rp = t.rp
-        _, _, par = self._prompt(difficulty)
-        while len(sides) < MATCH_SIZE:
-            sides.append(_make_ghost(anchor_rating, anchor_rp, par))
-        self._form_match(sides, humans, difficulty=difficulty)
-
     def _resolve_difficulty(self, tickets: list[Ticket]) -> str:
         for t in tickets:
             if t.difficulty != "any":
@@ -367,8 +326,8 @@ class DuoMatchMaker:
                     difficulty: str | None = None) -> None:
         difficulty = difficulty or self._resolve_difficulty(tickets)
         start, target, par = self._prompt(difficulty)
-        # Pair each human side with its ticket's party_id (ghosts trail with None)
-        # so premade partners are guaranteed to share a team.
+        # Pair each human side with its ticket's party_id so premade partners
+        # are guaranteed to share a team.
         entries = [(s, tickets[i].party_id if i < len(tickets) else None)
                    for i, s in enumerate(sides)]
         team_a, team_b = _assign_teams(entries)
@@ -522,10 +481,10 @@ def _balance_teams(sides: list[Side]) -> tuple[list[Side], list[Side]]:
 def _assign_teams(entries: list[tuple[Side, str | None]]) -> tuple[list[Side], list[Side]]:
     """Split four sides into two teams of two, keeping any premade party (sides
     sharing a party_id) together. With no parties, fall back to the rating-
-    balanced snake seed so solo/ghost matches stay fair."""
+    balanced snake seed so all-solo matches stay fair."""
     groups: dict[str, list[Side]] = {}
     for side, pid in entries:
-        # Solos (and ghosts) get a unique key so they're never merged.
+        # Solos get a unique key so they're never merged.
         key = pid if pid else f"solo-{id(side)}"
         groups.setdefault(key, []).append(side)
     pairs = [g for g in groups.values() if len(g) >= 2]

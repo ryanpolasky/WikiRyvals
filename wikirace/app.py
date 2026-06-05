@@ -276,6 +276,11 @@ class ExtVisitRequest(BaseModel):
     race_id: str
     title: str
     links: list[str] | None = None
+    # The article link the player actually clicked, and the page they clicked it
+    # from. Lets the server validate the click (always a real on-page link) rather
+    # than the landing title, which differs whenever the link is a redirect.
+    via: str | None = None
+    via_from: str | None = None
 
 
 @app.post("/api/ext/new")
@@ -370,7 +375,18 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     # rather than wrongly flag a clean run.
     seen_prev = race.links_seen.get(race.current)
     verified = seen_prev is not None
-    legal = (title in set(seen_prev)) if verified else True
+    prev_set = set(seen_prev) if verified else set()
+    # Validate the *click*, not the landing. Clicking a Wikipedia redirect lands on
+    # a different canonical title that isn't in the previous page's link set, which
+    # would wrongly flag a clean hop. The content script reports the link the player
+    # actually clicked (via) and the page it was clicked from (via_from); if that was
+    # a real link on the page we're leaving, the hop is legal wherever the redirect
+    # resolved. via_from must match race.current so a stale click can't be replayed
+    # to launder an illegal jump.
+    via = normalize_title(req.via) if req.via else None
+    via_from = normalize_title(req.via_from) if req.via_from else None
+    via_ok = via is not None and via_from == race.current and via in prev_set
+    legal = (not verified) or (title in prev_set) or via_ok
     race.path.append(title)
     race.current = title
     if not legal:
@@ -447,6 +463,22 @@ RANKED_RESULTS: dict[str, dict[str, dict]] = {}
 DUO_INVITES: dict[str, dict] = {}
 DUO_INVITES_LOCK = threading.Lock()
 INVITE_TTL = 90.0  # seconds a pending invite stays live before it lapses
+
+# Lightweight presence: the side panel polls /api/ext/party/incoming every ~3s
+# while open, which doubles as a heartbeat. A friend counts as "online" if we've
+# seen that heartbeat within PRESENCE_TTL, so the friends list shows who's
+# actually around (and can gate duel invites on it).
+PRESENCE: dict[str, float] = {}
+PRESENCE_TTL = 12.0
+
+
+def _touch_presence(user_id: str) -> None:
+    PRESENCE[user_id] = time.time()
+
+
+def _online_user_ids() -> set[str]:
+    now = time.time()
+    return {uid for uid, ts in PRESENCE.items() if now - ts < PRESENCE_TTL}
 
 
 def _bearer(token: str | None, authorization: str | None) -> str | None:
@@ -1006,8 +1038,8 @@ def mm_result(req: ResultReq) -> dict:
     if race is None:
         raise HTTPException(400, "No race is bound to this match yet.")
     # Only commit a result once the player has actually finished (or is forfeiting).
-    # Submitting early would resolve a ghost match instantly as a DNF, since the
-    # bot side is always "submitted". Until then, report live progress.
+    # Submitting a DNF early would lock in a loss while they're still racing, so
+    # until they finish we just report live progress.
     if not race.finished and not req.forfeit:
         return {"status": "racing", "clicks": race.clicks, "time_ms": race.elapsed_ms}
     resolution = maker.submit(
@@ -1453,15 +1485,27 @@ class FriendRemoveReq(BaseModel):
 
 
 def _friends_payload(user_id: str) -> dict:
-    """Friends list annotated with who is currently searching/in a duos party."""
+    """Friends list annotated with live presence: in a match / in a duos party /
+    searching / online (panel open, idle) / offline."""
     data = accounts.list_friends(user_id)
     searching = _searching_user_ids()
     in_party = _partied_user_ids()
+    in_match = _in_match_user_ids()
+    online = _online_user_ids()
     for card in data["friends"]:
         fid = card["id"]
-        card["online"] = fid in searching or fid in in_party
-        card["status"] = ("in party" if fid in in_party
-                          else "searching" if fid in searching else "offline")
+        if fid in in_match:
+            status = "in match"
+        elif fid in in_party:
+            status = "in party"
+        elif fid in searching:
+            status = "searching"
+        elif fid in online:
+            status = "online"
+        else:
+            status = "offline"
+        card["status"] = status
+        card["online"] = status != "offline"
     return data
 
 
@@ -1483,6 +1527,19 @@ def _partied_user_ids() -> set[str]:
                 if inv["status"] == "accepted":
                     ids.add(inv["to_id"])
         return ids
+
+
+def _in_match_user_ids() -> set[str]:
+    """Users currently in an unresolved 1v1 / private (duel) match, so the friends
+    list can show them busy and block a second duel invite."""
+    ids: set[str] = set()
+    for mid, m in list(matchmaker._matches.items()):  # noqa: SLF001
+        if mid in RANKED_RESULTS:
+            continue
+        for s in (m.a, m.b):
+            if s is not None and getattr(s, "user_id", None):
+                ids.add(s.user_id)
+    return ids
 
 
 @app.post("/api/ext/friends/request")
@@ -1517,6 +1574,7 @@ def friends_remove(req: FriendRemoveReq) -> dict:
 def friends_list(token: str | None = None,
                  authorization: str | None = Header(default=None)) -> dict:
     user = _require_user(token, authorization)
+    _touch_presence(user["id"])
     return _friends_payload(user["id"])
 
 
@@ -1526,6 +1584,7 @@ class PartyInviteReq(BaseModel):
     token: str
     friend_id: str
     difficulty: str | None = "any"
+    kind: str = "duos"  # "duos" (2v2 party) or "duel" (casual 1v1)
 
 
 class PartyInviteIdReq(BaseModel):
@@ -1549,6 +1608,7 @@ def _invite_public(inv: dict) -> dict:
         "to_id": inv["to_id"],
         "to_name": inv["to_name"],
         "difficulty": inv["difficulty"],
+        "kind": inv.get("kind", "duos"),
         "status": inv["status"],
         "age_ms": int((time.time() - inv["created_at"]) * 1000),
     }
@@ -1559,6 +1619,7 @@ def party_invite(req: PartyInviteReq) -> dict:
     user = _require_user(req.token)
     if user.get("needs_username"):
         raise HTTPException(400, "Pick a username first.")
+    kind = req.kind if req.kind in ("duos", "duel") else "duos"
     friend = accounts.get_user(req.friend_id)
     if friend is None:
         raise HTTPException(404, "Unknown player.")
@@ -1576,6 +1637,7 @@ def party_invite(req: PartyInviteReq) -> dict:
             "from_id": user["id"], "from_name": user["username"],
             "to_id": friend["id"], "to_name": friend["username"],
             "difficulty": req.difficulty or "any",
+            "kind": kind,
             "status": "pending", "created_at": time.time(),
             "tickets": {},
         }
@@ -1588,6 +1650,7 @@ def party_invite(req: PartyInviteReq) -> dict:
 def party_incoming(token: str | None = None,
                    authorization: str | None = Header(default=None)) -> dict:
     user = _require_user(token, authorization)
+    _touch_presence(user["id"])
     with DUO_INVITES_LOCK:
         _expire_invites()
         out = [_invite_public(inv) for inv in DUO_INVITES.values()
@@ -1606,6 +1669,8 @@ def party_poll(invite: str, token: str | None = None,
             return {"status": "expired"}
         pub = _invite_public(inv)
         pub["ticket_id"] = inv["tickets"].get(user["id"])
+        if inv.get("kind") == "duel" and inv.get("match_id"):
+            pub["match"] = matchmaker.get_match(inv["match_id"], user["id"])
     return pub
 
 
@@ -1623,13 +1688,21 @@ def party_accept(req: PartyInviteIdReq) -> dict:
         if inviter is None:
             inv["status"] = "expired"
             raise HTTPException(400, "The inviter is no longer available.")
-        # Seat both friends as one premade party in the duos queue.
+        if inv.get("kind") == "duel":
+            # Casual 1v1: build a private head-to-head for the two friends right
+            # here (no queue, no EP) and hand both sides the same match.
+            match = matchmaker.create_duel(inviter, user, inv["difficulty"])
+            inv["match_id"] = match.match_id
+            inv["status"] = "accepted"
+            return {"ok": True, "kind": "duel",
+                    "match": matchmaker.get_match(match.match_id, user["id"])}
+        # Duos: seat both friends as one premade party in the duos queue.
         t_from = duo_matchmaker.enqueue(inviter, inv["difficulty"], party_id=inv["party_id"])
         t_to = duo_matchmaker.enqueue(user, inv["difficulty"], party_id=inv["party_id"])
         inv["tickets"] = {inv["from_id"]: t_from.ticket_id, inv["to_id"]: t_to.ticket_id}
         inv["status"] = "accepted"
-    return {"ok": True, "ticket_id": t_to.ticket_id, "party_id": inv["party_id"],
-            "difficulty": inv["difficulty"]}
+    return {"ok": True, "kind": "duos", "ticket_id": t_to.ticket_id,
+            "party_id": inv["party_id"], "difficulty": inv["difficulty"]}
 
 
 @app.post("/api/ext/party/decline")

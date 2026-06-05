@@ -9,6 +9,10 @@
 
 const BACKEND = globalThis.WIKIRYVALS_BACKEND;  // from config.js (loaded first in lobby.html)
 const TOKEN_KEY = "wr_token";
+// A live ranked/duo match in flight, stashed so the panel can re-enter the racing
+// screen if Chrome reloads it (the per-tab side panel reloads when the race tab
+// opens). Cleared when the match resolves or the player returns to the lobby.
+const LIVE_MATCH_KEY = "wr_live_match";
 
 let TOKEN = null;
 let ME = null;                 // current user dict
@@ -341,7 +345,7 @@ $("me-logout").addEventListener("click", async () => {
   try { await fetch(BACKEND + "/api/ext/auth/logout", { method: "POST", headers: { Authorization: "Bearer " + TOKEN } }); } catch (_) {}
   TOKEN = null; ME = null;
   stopInvitePolling();
-  await chrome.storage.local.remove(TOKEN_KEY);
+  await chrome.storage.local.remove([TOKEN_KEY, LIVE_MATCH_KEY]);
   authStep("auth-email-step");
   showScreenAuth();
 });
@@ -497,9 +501,10 @@ function esc(s) {
 }
 
 function friendStatusDot(card) {
-  const cls = card.status === "in party" ? "in-party"
+  const cls = (card.status === "in match" || card.status === "in party") ? "in-party"
             : card.status === "searching" ? "searching"
-            : card.online ? "online" : "offline";
+            : card.status === "online" ? "online"
+            : "offline";
   return `<span class="status-dot ${cls}" title="${esc(card.status || "offline")}"></span>`;
 }
 
@@ -520,7 +525,10 @@ function renderFriends(data) {
   $("friends-empty").hidden = friends.length > 0;
   $("friends-count").textContent = friends.length ? `${friends.length}` : "";
   list.innerHTML = friends.map((f) => {
-    const canInvite = f.status !== "in party";
+    const canInvite = f.status !== "in party" && f.status !== "in match";
+    const canDuel = f.status === "online";  // present and idle (not searching/in a game)
+    const duelTitle = canDuel ? "Challenge to a casual 1v1 duel"
+                              : "They need to be online and not already in a game";
     return `<li class="friend-li">
       <div class="friend-main">
         ${friendStatusDot(f)}
@@ -528,7 +536,8 @@ function renderFriends(data) {
         <div class="friend-sub">${f.in_placements ? "Placements" : esc(f.rank) + " · " + f.rp + " EP"}</div>
       </div>
       <div class="friend-actions">
-        <button class="btn-primary btn-sm" data-invite="${esc(f.id)}" ${canInvite ? "" : "disabled"}>Invite</button>
+        <button class="btn-primary btn-sm" data-duel="${esc(f.id)}" ${canDuel ? "" : "disabled"} title="${duelTitle}">Duel</button>
+        <button class="btn-secondary btn-sm" data-invite="${esc(f.id)}" ${canInvite ? "" : "disabled"} title="Invite to a 2v2 duos party">Duos</button>
         <button class="btn-ghost btn-sm" data-remove="${esc(f.id)}" title="Remove">✕</button>
       </div>
     </li>`;
@@ -560,6 +569,8 @@ function renderFriends(data) {
   if (badge) { badge.hidden = incoming.length === 0; badge.textContent = String(incoming.length); }
 
   // Wire row actions.
+  list.querySelectorAll("[data-duel]").forEach((b) =>
+    b.addEventListener("click", () => inviteToDuel(b.dataset.duel)));
   list.querySelectorAll("[data-invite]").forEach((b) =>
     b.addEventListener("click", () => inviteToDuo(b.dataset.invite)));
   document.querySelectorAll("#view-friends [data-remove]").forEach((b) =>
@@ -588,6 +599,20 @@ async function addFriend() {
 
 // ---- party invite (inviter side) -----------------------------------------
 
+async function inviteToDuel(friendId) {
+  // Casual 1v1 challenge straight from the friends list (invite-based private
+  // match - no code to share). Reuses the party-invite channel with kind=duel.
+  try {
+    const inv = await api("/api/ext/party/invite", { method: "POST", auth: true,
+      body: { friend_id: friendId, difficulty: "any", kind: "duel" } });
+    enterMatchSearching();              // 1v1 waiting layout
+    $("match-mode").textContent = "Duel challenge";
+    $("vs-opp-name").textContent = inv.to_name;
+    $("match-note").textContent = `Duel sent to ${inv.to_name}. Waiting for them to accept…`;
+    pollPartyInvite(inv.invite_id, inv.to_name);
+  } catch (e) { friendsHint(e.message, "err"); }
+}
+
 async function inviteToDuo(friendId) {
   const difficulty = "any"; // multiplayer doesn't pick difficulty (SBMM)
   try {
@@ -604,7 +629,10 @@ function pollPartyInvite(inviteId, friendName) {
   poll.party = setInterval(async () => {
     try {
       const p = await api(`/api/ext/party/poll?invite=${inviteId}`, { auth: true });
-      if (p.status === "accepted" && p.ticket_id) {
+      if (p.status === "accepted" && p.match) {
+        clearInterval(poll.party); poll.party = null;
+        beginMatch(p.match, "private");  // duel: straight into the casual 1v1
+      } else if (p.status === "accepted" && p.ticket_id) {
         clearInterval(poll.party); poll.party = null;
         $("match-note").textContent = `${friendName} joined. Finding an opposing pair…`;
         $("vs-you-name").textContent = `${ME.username} & ${friendName}`;
@@ -653,6 +681,8 @@ function showInviteBanner(inv) {
   if (!inv) { ACTIVE_INVITE = null; banner.hidden = true; return; }
   ACTIVE_INVITE = inv;
   $("party-banner-from").textContent = inv.from_name;
+  const act = $("party-banner-action");
+  if (act) act.textContent = inv.kind === "duel" ? "challenged you to a duel" : "invited you to duos";
   banner.hidden = false;
 }
 
@@ -662,6 +692,7 @@ async function acceptInvite() {
   $("party-banner").hidden = true;
   try {
     const r = await api("/api/ext/party/accept", { method: "POST", auth: true, body: { invite_id: inv.invite_id } });
+    if (r.kind === "duel" && r.match) { beginMatch(r.match, "private"); return; }
     enterMatchSearching("duo");
     $("match-mode").textContent = "Duos party";
     $("vs-you-name").textContent = `${ME.username} & ${inv.from_name}`;
@@ -710,8 +741,8 @@ function beginMatch(match, mode) {
     $("vs-opp-name").innerHTML = opps.map((o) => o.username + cbadgesHTML(o.tags, { compact: true })).join(" & ") || "opponents";
     $("vs-opp-av").textContent = "2";
     $("vs-opp-meta").innerHTML = "";
-    const avg = opps.length ? Math.round(opps.reduce((a, o) => a + o.rating, 0) / opps.length) : 0;
-    $("vs-opp-rank").innerHTML = opps.some((o) => o.is_bot) ? `~${avg} · ghosts` : `~${avg} avg`;
+    const avgRp = opps.length ? Math.round(opps.reduce((a, o) => a + (o.rp || 0), 0) / opps.length) : 0;
+    $("vs-opp-rank").innerHTML = vsRankHTML(avgRp);
   } else {
     const opp = match.opponent;
     $("vs-you-name").textContent = match.you.username;
@@ -741,12 +772,13 @@ function beginMatch(match, mode) {
 // has storage + tabs + backend host permissions) when the background service
 // worker is asleep/wedged and won't answer. Mirrors background.js newRace so the
 // content script picks up the same race state from chrome.storage.
-async function startRaceDirect(mode, start, target) {
+async function startRaceDirect(mode, start, target, matchId) {
   let url = `${BACKEND}/api/ext/new?difficulty=${encodeURIComponent(mode || "any")}`;
   if (start && target) url += `&start=${encodeURIComponent(start)}&target=${encodeURIComponent(target)}`;
   const res = await fetch(url, { method: "POST" });
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const data = await res.json();
+  if (matchId) data.match_id = matchId;  // mirror newRace: tag ranked/duo races
   await chrome.storage.local.set({ race: data });
   await chrome.tabs.create({ url: data.start_url });
   return data;
@@ -756,14 +788,19 @@ async function launchRace(match, mode) {
   // Start the race via the background worker (opens a Wikipedia tab + drives HUD),
   // then bind that race to the match so the server scores the authoritative run.
   // Wrapped so a flaky worker wake can never strand the player on the countdown.
+  //
+  // Persist the live match BEFORE opening the tab: opening it reloads this per-tab
+  // side panel, tearing down everything below, so in practice it's boot's
+  // restoreLiveMatch() that re-binds the race and shows the racing screen.
+  try { await chrome.storage.local.set({ [LIVE_MATCH_KEY]: { match, at: Date.now() } }); } catch (_) {}
   try {
     let race = null;
-    const resp = await bg("newRace", { newTab: true, difficulty: mode, start: match.start, target: match.target });
+    const resp = await bg("newRace", { newTab: true, difficulty: mode, start: match.start, target: match.target, match_id: match.match_id });
     if (resp && resp.ok && resp.race) {
       race = resp.race;
     } else {
       // Worker didn't answer (MV3 eviction). Launch directly from the page.
-      race = await startRaceDirect(mode, match.start, match.target);
+      race = await startRaceDirect(mode, match.start, match.target, match.match_id);
     }
     if (!race || !race.race_id) {
       hint("Couldn't open the race tab - back to lobby, try again.", "err");
@@ -816,6 +853,7 @@ function renderDuoHud() {
 }
 
 function enterRacing(match) {
+  CURRENT_MATCH = match;
   const isDuo = match.team_kind === "duo";
   $("racing-start").textContent = match.start;
   $("racing-target").textContent = match.target;
@@ -974,6 +1012,7 @@ let LAST_RESULT = null;
 function showResult(r) {
   clearPolls();
   closeMatchSocket();
+  try { chrome.storage.local.remove(LIVE_MATCH_KEY); } catch (_) {}  // resolved; nothing to restore
   LAST_RESULT = r;
   $("share-preview").hidden = true;
   const won = r.won, draw = r.draw;
@@ -1013,10 +1052,9 @@ function showResult(r) {
     $("result-rank-rp").textContent = "Private lobbies don't affect your rank.";
   }
 
-  const rt = r.rating;
-  $("result-rating").innerHTML = (isRanked && rt)
-    ? `Rating ${rt.before} → <b>${rt.after}</b> <span class="${rt.delta >= 0 ? "pos" : "neg"}">(${rt.delta >= 0 ? "+" : ""}${rt.delta})</span>`
-    : "";
+  // MMR (Glicko) is hidden from players - EP is the only public number, and its
+  // change is already shown above via rp.delta.
+  $("result-rating").innerHTML = "";
 
   // CS2-style promotion series callout.
   const pr = r.promo || {};
@@ -1271,6 +1309,7 @@ function backToLobby() {
   clearPolls();
   closeMatchSocket();
   CURRENT_MATCH = null;
+  try { chrome.storage.local.remove(LIVE_MATCH_KEY); } catch (_) {}
   bg("clearRace");
   bg("matchHold", { active: false });  // match over, so a pending update can now apply
   showApp();
@@ -1367,7 +1406,7 @@ async function toggleDailyBoard() {
         const me = ME && r.username === ME.username ? " is-me" : "";
         li.className = "daily-row" + me;
         li.innerHTML = `<span class="dr-pos">${r.position}</span>` +
-                       `<span class="dr-name">${r.username || "-"}</span>` +
+                       `<span class="dr-name">${r.username || "-"}${cbadgesHTML(r.tags, { compact: true })}</span>` +
                        `<span class="dr-stat">${stat}${r.flagged ? " ⚑" : ""}</span>`;
         el.appendChild(li);
       }
@@ -1420,7 +1459,7 @@ async function toggleWeeklyBoard() {
         const me = ME && r.username === ME.username ? " is-me" : "";
         li.className = "daily-row" + me;
         li.innerHTML = `<span class="dr-pos">${r.position}</span>` +
-                       `<span class="dr-name">${r.username || "-"}</span>` +
+                       `<span class="dr-name">${r.username || "-"}${cbadgesHTML(r.tags, { compact: true })}</span>` +
                        `<span class="dr-stat">${stat}${r.flagged ? " ⚑" : ""}</span>`;
         el.appendChild(li);
       }
@@ -1490,8 +1529,8 @@ async function loadLeaderboard() {
       const placing = e.in_placements;
       const tier = placing ? `<span class="tier tier-iron">Placements</span>` : rankBadgeHTML(rk);
       return `<div class="li${mine ? " me-highlight" : ""}"><span class="rank">${e.position}</span>
-        <div class="li-main"><b>${e.username}${mine ? ' <span class="you">you</span>' : ""}</b>
-        <span class="li-sub">${tier} · ${e.rp} EP · ${Math.round(e.rating)}</span></div>
+        <div class="li-main"><b>${e.username}${cbadgesHTML(e.tags, { compact: true })}${mine ? ' <span class="you">you</span>' : ""}</b>
+        <span class="li-sub">${tier} · ${e.rp} EP</span></div>
         <span class="li-end">${e.wins}W ${e.losses}L</span></div>`;
     }).join("");
   } catch (e) { list.className = "list is-empty"; list.innerHTML = `<p class="preview-tag">Couldn't load leaderboard.</p>`; }
@@ -1549,7 +1588,7 @@ async function loadProfile() {
   const placing = ME.in_placements;
   $("pf-rank").innerHTML = placing
     ? `<span class="tier tier-iron">Placements</span> · ${ME.placements_left} left · ${ME.rp} EP`
-    : `${rankBadgeHTML(ME.rank)} · <b>${ME.rp}</b> EP · ${Math.round(ME.rating)} <span class="rd">± ${Math.round(ME.rd)}</span>`;
+    : `${rankBadgeHTML(ME.rank)} · <b>${ME.rp}</b> EP`;
 
   const winRate = ME.games ? Math.round((ME.wins / ME.games) * 100) : 0;
   $("pf-stats").innerHTML = `
@@ -1574,6 +1613,34 @@ async function loadProfile() {
   $("pf-progress-label").innerHTML = placing
     ? `Finish ${ME.placements_left} placement match${ME.placements_left === 1 ? "" : "es"} to get ranked.`
     : (rk.next_name ? `<b>${rk.rp_to_next}</b> EP to <b>${rk.next_name}</b>.` : `You're at the apex. Find your Ryval.`);
+}
+
+// If a ranked/duo match was live when Chrome reloaded the panel (it reloads the
+// per-tab side panel when the race tab opens), re-enter the racing screen and
+// reconnect so the player keeps their live opponent feed, result, and confetti
+// instead of being dumped back in the lobby.
+async function restoreLiveMatch() {
+  let saved = null;
+  try {
+    const got = await chrome.storage.local.get([LIVE_MATCH_KEY]);
+    saved = got && got[LIVE_MATCH_KEY];
+  } catch (_) {}
+  if (!saved || !saved.match || !saved.match.match_id) return;
+  // Ignore a stale stash - the server sweeps live matches after ~30 min.
+  if (!saved.at || Date.now() - saved.at > 30 * 60 * 1000) {
+    try { await chrome.storage.local.remove(LIVE_MATCH_KEY); } catch (_) {}
+    return;
+  }
+  // The launchRace context was likely torn down when the race tab opened, so the
+  // race may not have been bound to the match yet. Re-bind here (idempotent).
+  try {
+    const rs = await bg("getRace");
+    if (rs && rs.ok && rs.race && rs.race.race_id) {
+      await api("/api/ext/mm/bind", { method: "POST", auth: true,
+        body: { match_id: saved.match.match_id, race_id: rs.race.race_id } });
+    }
+  } catch (_) {}
+  enterRacing(saved.match);
 }
 
 // ================================================================ BOOT
@@ -1604,6 +1671,7 @@ async function loadProfile() {
       try {
         ME = (await api("/api/ext/me", { auth: true })).user;
         enterApp();
+        await restoreLiveMatch();
         return;
       } catch (e) {
         if (e && (e.status === 401 || e.status === 403)) {

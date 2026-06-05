@@ -783,7 +783,10 @@ class AccountStore:
         time, then fewest clicks."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT username, clicks, time_ms, flagged, finished FROM daily_results "
+                "SELECT username, clicks, time_ms, flagged, finished, "
+                "(SELECT GROUP_CONCAT(tag) FROM account_tags "
+                " WHERE account_tags.user_id = daily_results.user_id) AS tags "
+                "FROM daily_results "
                 "WHERE date=? ORDER BY finished DESC, flagged ASC, time_ms ASC, clicks ASC "
                 "LIMIT ?",
                 (date, limit),
@@ -792,6 +795,7 @@ class AccountStore:
         for i, r in enumerate(rows):
             d = dict(r)
             d["position"] = i + 1
+            d["tags"] = d["tags"].split(",") if d.get("tags") else []
             out.append(d)
         return out
 
@@ -842,7 +846,10 @@ class AccountStore:
         fastest time, then fewest clicks."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT username, clicks, time_ms, flagged, finished FROM weekly_results "
+                "SELECT username, clicks, time_ms, flagged, finished, "
+                "(SELECT GROUP_CONCAT(tag) FROM account_tags "
+                " WHERE account_tags.user_id = weekly_results.user_id) AS tags "
+                "FROM weekly_results "
                 "WHERE week=? ORDER BY finished DESC, flagged ASC, time_ms ASC, clicks ASC "
                 "LIMIT ?",
                 (week, limit),
@@ -851,6 +858,7 @@ class AccountStore:
         for i, r in enumerate(rows):
             d = dict(r)
             d["position"] = i + 1
+            d["tags"] = d["tags"].split(",") if d.get("tags") else []
             out.append(d)
         return out
 

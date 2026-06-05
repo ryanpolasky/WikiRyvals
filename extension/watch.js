@@ -51,7 +51,7 @@ function playerCard(pl) {
       <div class="p-av">${pl.is_bot ? "👻" : initials(pl.username)}</div>
       <div>
         <div class="p-name">${pl.username}</div>
-        <div class="p-team">${Math.round(pl.rating || 0)} rating${pl.region ? " · " + pl.region : ""}</div>
+        <div class="p-team">${[pl.rp != null ? pl.rp + " EP" : "", pl.region].filter(Boolean).join(" · ")}</div>
       </div>
     </div>
     <div class="p-cur">${cur}</div>

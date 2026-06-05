@@ -68,6 +68,23 @@ function collectLinks() {
   return out;
 }
 
+// One-shot read of the link the player last clicked (set by the capture-phase
+// listener in init). Consumed immediately and freshness-gated so a stale click
+// can never be replayed to launder a later hop.
+function readVia() {
+  try {
+    const raw = sessionStorage.getItem("rwr_via");
+    sessionStorage.removeItem("rwr_via");
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (v && typeof v.to === "string" && Date.now() - (v.at || 0) < 15000) {
+        return { to: v.to, from: v.from || null };
+      }
+    }
+  } catch (_) {}
+  return { to: null, from: null };
+}
+
 function send(type, extra) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(Object.assign({ type }, extra || {}), (resp) => {
@@ -231,9 +248,33 @@ function ensureHud() {
     <div id="rwr-flash" class="rwr-flash rwr-hidden"></div>`;
   ensureSketchyDefs();
   document.documentElement.appendChild(hud);
-  hud.querySelector("#rwr-new").addEventListener("click", async () => {
-    const difficulty = hud.querySelector("#rwr-diff").value;
-    await send("newRace", { difficulty });
+  hud.querySelector("#rwr-new").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    const action = btn.dataset.action || "new";
+    if (action === "forfeit") {
+      // Ranked/duo: forfeiting counts as a loss, so confirm first.
+      const matchId = btn.dataset.matchId;
+      if (!matchId) return;
+      if (!confirm("Forfeit this match? It counts as a loss.")) return;
+      btn.disabled = true;
+      const r = await send("forfeitMatch", { match_id: matchId });
+      btn.disabled = false;
+      if (r && r.ok) {
+        await send("clearRace");
+        updateHud(null);
+        flash("You forfeited the match.");
+      } else {
+        flash("Couldn't forfeit - use the Forfeit button in the side panel.");
+      }
+    } else if (action === "end") {
+      // Solo / daily / weekly: no opponent, so just abandon the current run.
+      await send("clearRace");
+      updateHud(null);
+      flash("Race ended.");
+    } else {
+      const difficulty = hud.querySelector("#rwr-diff").value;
+      await send("newRace", { difficulty });
+    }
   });
   hud.querySelector("#rwr-theme").addEventListener("change", toggleTheme);
   // Re-open the results modal after it's been dismissed: the finished race stays
@@ -466,10 +507,38 @@ function applyRaceMode(active) {
   });
 }
 
+function setHudButton(hud, race) {
+  // The single HUD action button is contextual: start a race when idle, abandon a
+  // solo run mid-race ("End race"), or forfeit a ranked/duo match (which the race
+  // carries a match_id for). The difficulty picker only matters when idle.
+  const btn = hud.querySelector("#rwr-new");
+  const diff = hud.querySelector("#rwr-diff");
+  if (!btn) return;
+  const active = !!(race && !race.finished);
+  if (active && race.match_id) {
+    btn.textContent = "Forfeit";
+    btn.dataset.action = "forfeit";
+    btn.dataset.matchId = race.match_id;
+    btn.classList.add("rwr-danger");
+  } else if (active) {
+    btn.textContent = "End race";
+    btn.dataset.action = "end";
+    delete btn.dataset.matchId;
+    btn.classList.remove("rwr-danger");
+  } else {
+    btn.textContent = "New race";
+    btn.dataset.action = "new";
+    delete btn.dataset.matchId;
+    btn.classList.remove("rwr-danger");
+  }
+  if (diff) diff.style.display = active ? "none" : "";
+}
+
 function updateHud(race, reveal) {
   const hud = ensureHud();
   raceActive = !!(race && !race.finished);
   const resultsBtn = hud.querySelector("#rwr-results");
+  setHudButton(hud, race);
   if (!race) {
     // No active race: collapse the bar to just the brand + controls, hiding the
     // goal chips and the clicks/timer/par stats (see .rwr-idle in content.css).
@@ -532,6 +601,22 @@ async function init() {
     }
   }, true);
 
+  // Remember the article link the player actually clicks so the backend can
+  // validate the *click* (always a real on-page link) instead of the page they
+  // land on - the two differ on Wikipedia redirects, which would otherwise be
+  // flagged as illegal hops. sessionStorage survives the same-tab navigation to
+  // the next article, where the visit report below reads and consumes it.
+  document.addEventListener("click", (ev) => {
+    const a = ev.target && ev.target.closest && ev.target.closest("a[href]");
+    if (!a || !a.closest(".mw-parser-output") || a.closest(RWR_SKIP_SEL)) return;
+    const to = hrefToTitle(a.getAttribute("href") || "");
+    if (!to) return;
+    try {
+      sessionStorage.setItem(
+        "rwr_via", JSON.stringify({ from: currentTitle(), to, at: Date.now() }));
+    } catch (_) {}
+  }, true);
+
   const got = await send("getRace");
   const race = got.ok ? got.race : null;
   if (!race) {
@@ -541,7 +626,8 @@ async function init() {
 
   const title = currentTitle();
   if (title && !race.finished) {
-    const resp = await send("visit", { title, links: collectLinks() });
+    const via = readVia();
+    const resp = await send("visit", { title, links: collectLinks(), via: via.to, via_from: via.from });
     updateHud(resp.ok ? resp.race : race, true);
     if (resp.ok && resp.race && resp.race.path && resp.race.path.length >= 2) {
       const last = resp.race.path[resp.race.path.length - 1];
