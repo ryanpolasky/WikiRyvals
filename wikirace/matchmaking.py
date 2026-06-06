@@ -63,7 +63,11 @@ class Side:
     clicks: int | None = None
     time_ms: int | None = None
     flagged: bool = False
+    forfeited: bool = False  # left/abandoned the match -> an automatic loss
     tags: list[str] = field(default_factory=list)
+    # Live presence only (monotonic ts of last heartbeat/hop); never persisted, so
+    # a restored match is "unseen" until the player's tab pings again.
+    last_seen: float | None = None
 
     def public(self) -> dict:
         return {
@@ -76,6 +80,7 @@ class Side:
             "clicks": self.clicks,
             "time_ms": self.time_ms,
             "flagged": self.flagged,
+            "forfeited": self.forfeited,
             "tags": list(self.tags),
         }
 
@@ -88,7 +93,7 @@ class Side:
             "race_id": self.race_id, "submitted": self.submitted,
             "finished": self.finished, "clicks": self.clicks,
             "time_ms": self.time_ms, "flagged": self.flagged,
-            "tags": list(self.tags),
+            "forfeited": self.forfeited, "tags": list(self.tags),
         }
 
     @classmethod
@@ -101,7 +106,7 @@ class Side:
             race_id=d.get("race_id"), submitted=bool(d.get("submitted")),
             finished=bool(d.get("finished")), clicks=d.get("clicks"),
             time_ms=d.get("time_ms"), flagged=bool(d.get("flagged")),
-            tags=list(d.get("tags") or []),
+            forfeited=bool(d.get("forfeited")), tags=list(d.get("tags") or []),
         )
 
 
@@ -518,7 +523,7 @@ class MatchMaker:
         have submitted, or None while still waiting on the opponent."""
         with self._lock:
             m = self._matches.get(match_id)
-            if not m:
+            if not m or m.resolved:
                 return None
             side = m.side_for(user_id)
             if side is None:
@@ -551,6 +556,67 @@ class MatchMaker:
             "a": {"side": a, "score": a_score},
             "b": {"side": b, "score": 1.0 - a_score},
         }
+
+    # ---- presence / abandonment ------------------------------------------
+    def heartbeat(self, match_id: str, user_id: str) -> bool:
+        """Mark a player as still present (their race tab pinged). Returns False if
+        the match is unknown/resolved so the client can stop pinging."""
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m or m.resolved:
+                return False
+            side = m.side_for(user_id)
+            if side is None:
+                return False
+            now = time.monotonic()
+            side.last_seen = now
+            m.last_touch = now
+            return True
+
+    def forfeit(self, match_id: str, user_id: str) -> dict | None:
+        """Concede for ``user_id``. A 1v1 forfeit is decisive: the opponent wins
+        immediately, with no need to wait for them to finish racing a ghost."""
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m or m.resolved:
+                return None
+            side = m.side_for(user_id)
+            if side is None:
+                return None
+            m.last_touch = time.monotonic()
+            side.submitted = True
+            side.finished = False
+            side.forfeited = True
+            opp = m.other(side)
+            opp.submitted = True  # wins by forfeit regardless of their progress
+            return self._resolve(m)
+
+    def mutual_forfeit(self, match_id: str) -> dict | None:
+        """Both sides went silent at once - resolve as a draw (no winner)."""
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m or m.resolved:
+                return None
+            m.last_touch = time.monotonic()
+            for s in (m.a, m.b):
+                s.submitted = True
+                s.finished = False
+                s.forfeited = True
+            return self._resolve(m)  # _score: both forfeited -> 0.5 draw
+
+    def timed_out_sides(self, now: float, timeout: float) -> list[tuple[str, str]]:
+        """(match_id, user_id) for every present-then-silent human side of a live
+        match - a race tab that connected and then went away (closed/crashed)."""
+        out: list[tuple[str, str]] = []
+        with self._lock:
+            for mid, m in self._matches.items():
+                if m.resolved:
+                    continue
+                for side in (m.a, m.b):
+                    if (side.user_id and side.last_seen is not None
+                            and now - side.last_seen > timeout):
+                        out.append((mid, side.user_id))
+        return out
 
     # ---- housekeeping -----------------------------------------------------
     def _sweep(self) -> None:
@@ -605,6 +671,12 @@ def _score(me: Side, opp: Side) -> float:
     to the target can still take it by having found the shorter path. Finishes
     further than GRACE_MS apart are decided on time alone: the trailing player
     missed the window."""
+    # A player who left/abandoned (forfeited) loses outright - the present player
+    # wins even without finishing, since there's no point racing a ghost to the end.
+    if me.forfeited and not opp.forfeited:
+        return 0.0
+    if opp.forfeited and not me.forfeited:
+        return 1.0
     me_ok = me.finished and not me.flagged
     opp_ok = opp.finished and not opp.flagged
     if me_ok and opp_ok:

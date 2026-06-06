@@ -141,6 +141,12 @@ def _startup() -> None:
                   "from the last run.")
     except Exception as e:  # pragma: no cover - best-effort recovery
         print(f"Could not restore live matches: {e}")
+    # Reap matches whose race tab went silent (closed/crashed mid-match) so the
+    # present opponent isn't left waiting on a ghost. Runs on the serving loop.
+    try:
+        asyncio.get_running_loop().create_task(_presence_sweeper())
+    except RuntimeError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +287,10 @@ class ExtVisitRequest(BaseModel):
     # than the landing title, which differs whenever the link is a redirect.
     via: str | None = None
     via_from: str | None = None
+    # How the page was reached, from the content script's Performance Navigation
+    # Timing: "navigate" | "reload" | "back_forward". Browser back/forward is never a
+    # legal race move, so we flag it regardless of which links the two pages share.
+    nav: str | None = None
 
 
 @app.post("/api/ext/new")
@@ -381,12 +391,30 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     # would wrongly flag a clean hop. The content script reports the link the player
     # actually clicked (via) and the page it was clicked from (via_from); if that was
     # a real link on the page we're leaving, the hop is legal wherever the redirect
-    # resolved. via_from must match race.current so a stale click can't be replayed
-    # to launder an illegal jump.
+    # resolved.
     via = normalize_title(req.via) if req.via else None
     via_from = normalize_title(req.via_from) if req.via_from else None
-    via_ok = via is not None and via_from == race.current and via in prev_set
-    legal = (not verified) or (title in prev_set) or via_ok
+    # Anchor the click to the page the player says they clicked from. Normally that's
+    # the server's current page; but visit reports are best-effort (the MV3 worker can
+    # be briefly evicted), and a dropped report leaves race.current stale - which used
+    # to wrongly flag the *next* perfectly legal click. So honor via_from when we've
+    # actually observed that page's links, and if they came from a page we never
+    # recorded at all, treat it as a missed step (no honest basis to accuse the hop).
+    # Search box / URL bar set no `via` (and aren't a back/forward nav), so they
+    # still fall through to the flag below; the browser back/forward button is caught
+    # explicitly via `nav`, since its destination is often legitimately linked from
+    # the current page (so `title in prev_set` alone would let it slip through).
+    if via_from is None or via_from == race.current:
+        via_prev = prev_set
+    else:
+        via_prev = set(race.links_seen.get(via_from, ()))
+    via_ok = via is not None and via in via_prev
+    missed_step = (via_from is not None and via_from != race.current
+                   and via_from not in race.links_seen)
+    if (req.nav or "").strip().lower() == "back_forward":
+        legal = False
+    else:
+        legal = (not verified) or (title in prev_set) or via_ok or missed_step
     race.path.append(title)
     race.current = title
     if not legal:
@@ -453,6 +481,13 @@ duo_matchmaker = DuoMatchMaker(
 
 # Don't bother recovering matches older than this on startup (past the live TTL).
 MATCH_RESTORE_MAX_AGE = 1800.0
+
+# In-match presence: the live race tab pings /api/ext/mm/heartbeat every ~5s. If a
+# side goes silent for HEARTBEAT_TIMEOUT we treat its tab as gone (closed/crashed)
+# and force-forfeit it; a background task sweeps for this every few seconds. The
+# timeout is generous so a slow page load between hops never false-forfeits.
+HEARTBEAT_TIMEOUT = 20.0
+PRESENCE_SWEEP_INTERVAL = 4.0
 
 # match_id -> {user_id -> ranked-result payload}. Lets the slower of two human
 # players fetch their result after the match resolves.
@@ -965,6 +1000,11 @@ class ResultReq(BaseModel):
     forfeit: bool = False
 
 
+class HeartbeatReq(BaseModel):
+    token: str
+    match_id: str
+
+
 @app.post("/api/ext/mm/enqueue")
 def mm_enqueue(req: EnqueueReq) -> dict:
     user = _require_user(req.token)
@@ -1042,15 +1082,31 @@ def mm_result(req: ResultReq) -> dict:
     # until they finish we just report live progress.
     if not race.finished and not req.forfeit:
         return {"status": "racing", "clicks": race.clicks, "time_ms": race.elapsed_ms}
-    resolution = maker.submit(
-        req.match_id, user["id"],
-        finished=race.finished, clicks=race.clicks,
-        time_ms=race.elapsed_ms, flagged=race.flagged,
-    )
+    if req.forfeit:
+        # A 1v1 forfeit is decisive (the opponent wins now); a duo forfeit just
+        # marks this player out and resolves once the rest of the team submits.
+        resolution = maker.forfeit(req.match_id, user["id"])
+    else:
+        resolution = maker.submit(
+            req.match_id, user["id"],
+            finished=race.finished, clicks=race.clicks,
+            time_ms=race.elapsed_ms, flagged=race.flagged,
+        )
     if resolution is None:
         return {"status": "waiting"}
     (_finalize_duo if is_duo else _finalize)(resolution)
     return RANKED_RESULTS.get(req.match_id, {}).get(user["id"], {"status": "waiting"})
+
+
+@app.post("/api/ext/mm/heartbeat")
+def mm_heartbeat(req: HeartbeatReq) -> dict:
+    """Keepalive from a live race tab. Refreshes presence so a closed/crashed tab
+    can be detected and force-forfeited by the presence sweeper. ``alive`` is False
+    once the match is gone/resolved, so the client knows it can stop pinging."""
+    user = _require_user(req.token)
+    alive = (matchmaker.heartbeat(req.match_id, user["id"])
+             or duo_matchmaker.heartbeat(req.match_id, user["id"]))
+    return {"ok": True, "alive": bool(alive)}
 
 
 def _finalize(resolution: dict) -> None:
@@ -1313,6 +1369,9 @@ def _route_race_update(race: "ExtRace", *, is_hop: bool) -> None:
     if link is None:
         return
     match_id, user_id = link
+    # A live hop is also proof of life: refresh presence so a slow thinker between
+    # heartbeats isn't mistaken for a closed tab by the presence sweeper.
+    (duo_matchmaker if is_duo else matchmaker).heartbeat(match_id, user_id)
     if is_hop:
         try:
             accounts.append_match_event(
@@ -1350,6 +1409,66 @@ def _auto_resolve(match_id: str, user_id: str, race: "ExtRace",
     (_finalize_duo if is_duo else _finalize)(resolution)
     hub.publish(match_id, {"type": "resolved",
                            "results": RANKED_RESULTS.get(match_id, {})})
+
+
+def _forfeit_match(match_id: str, user_id: str, *, is_duo: bool) -> None:
+    """Force-concede ``user_id`` (their race tab went away) and push the result to
+    whoever's left. Mirrors _auto_resolve, but for an abandonment, not a finish."""
+    if match_id in RANKED_RESULTS:
+        return
+    maker = duo_matchmaker if is_duo else matchmaker
+    resolution = maker.forfeit(match_id, user_id)
+    if resolution is None:
+        return  # duo match still waiting on a live teammate
+    (_finalize_duo if is_duo else _finalize)(resolution)
+    hub.publish(match_id, {"type": "resolved",
+                           "results": RANKED_RESULTS.get(match_id, {})})
+
+
+def _draw_match(match_id: str) -> None:
+    """Both 1v1 sides went silent at once - resolve as a no-contest draw."""
+    if match_id in RANKED_RESULTS:
+        return
+    resolution = matchmaker.mutual_forfeit(match_id)
+    if resolution is None:
+        return
+    _finalize(resolution)
+    hub.publish(match_id, {"type": "resolved",
+                           "results": RANKED_RESULTS.get(match_id, {})})
+
+
+def _sweep_match_presence() -> None:
+    """Force-forfeit every match side whose race tab has gone silent past the
+    timeout. 1v1: a lone silent side loses; both silent -> draw. Duo: each silent
+    player is marked out, but the team can still be carried by a teammate."""
+    now = time.monotonic()
+    by_match: dict[str, list[str]] = {}
+    for mid, uid in matchmaker.timed_out_sides(now, HEARTBEAT_TIMEOUT):
+        by_match.setdefault(mid, []).append(uid)
+    for mid, uids in by_match.items():
+        try:
+            if len(uids) >= 2:
+                _draw_match(mid)
+            else:
+                _forfeit_match(mid, uids[0], is_duo=False)
+        except Exception:
+            pass
+    for mid, uid in duo_matchmaker.timed_out_sides(now, HEARTBEAT_TIMEOUT):
+        try:
+            _forfeit_match(mid, uid, is_duo=True)
+        except Exception:
+            pass
+
+
+async def _presence_sweeper() -> None:
+    """Reap abandoned matches off the serving loop. The sweep itself runs in a
+    worker thread since it takes the matchmaker locks and writes durable results."""
+    while True:
+        await asyncio.sleep(PRESENCE_SWEEP_INTERVAL)
+        try:
+            await asyncio.to_thread(_sweep_match_presence)
+        except Exception:
+            pass
 
 
 @app.websocket("/api/ext/ws/match/{match_id}")

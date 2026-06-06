@@ -12,6 +12,21 @@ function currentTitle() {
   return t ? t[0].toUpperCase() + t.slice(1) : null;
 }
 
+// How this page was reached (Performance Navigation Timing): "navigate" | "reload"
+// | "back_forward". Lets the backend flag the browser back/forward button - a
+// classic Wikirace cheat - since those aren't clicks on an on-page link.
+function navType() {
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    if (nav && nav.type) return nav.type;
+    if (performance.navigation) {
+      const t = performance.navigation.type;
+      return t === 2 ? "back_forward" : t === 1 ? "reload" : "navigate";
+    }
+  } catch (_) {}
+  return "navigate";
+}
+
 // Namespaces that aren't real article pages (mirrors wiki.py on the backend).
 const RWR_NON_ARTICLE = new Set([
   "file", "image", "category", "help", "wikipedia", "template", "template_talk",
@@ -160,6 +175,30 @@ let timeBase = { elapsed: 0, at: 0, running: false };
 // handler needs this because it must preventDefault() *synchronously* - awaiting
 // the background first lets the browser open the find bar before we can block it.
 let raceActive = false;
+
+// --- "Stuck?" hint --------------------------------------------------------
+// If a race runs long (HINT_AFTER_MS), surface the target article's one-line
+// Wikipedia short description as a gentle nudge. currentRace mirrors the live
+// race for the timer tick; the content script reloads on every hop, so "already
+// shown / dismissed" is persisted in sessionStorage (keyed by race) rather than
+// these per-page-load guards.
+const HINT_AFTER_MS = 180000; // 3 minutes
+let currentRace = null;
+let hintBusy = false;  // a summary fetch is in flight
+let hintDone = false;  // shown or decided for this page load
+
+// Auto-forfeit when the player leaves the race tab during a match (see the
+// visibilitychange handler in init). The grace absorbs an accidental tab flick.
+const LEAVE_GRACE_MS = 1200;
+let leaveForfeitTimer = null;
+let raceForfeited = false;
+
+// Presence heartbeat: while a MATCH race is live, ping the server every
+// HEARTBEAT_MS so it can detect a closed/crashed tab and force-forfeit it (the
+// server-side backstop for tab-close, where visibilitychange can't fire in time).
+const HEARTBEAT_MS = 5000;
+let heartbeatTimer = null;
+let heartbeatMatchId = null;
 
 function fmt(ms) {
   return (ms / 1000).toFixed(1) + "s";
@@ -318,13 +357,110 @@ function flash(msg) {
   flash._t = setTimeout(() => f.classList.add("rwr-hidden"), 2400);
 }
 
+function raceHintKey(race) {
+  return "rwr_hint_dismissed_" + (race.race_id || `${race.start}|${race.target}`);
+}
+
+function removeTargetHint() {
+  const h = document.getElementById("rwr-hint");
+  if (h) h.remove();
+}
+
+function showTargetHint(race, desc) {
+  let h = document.getElementById("rwr-hint");
+  if (!h) {
+    h = document.createElement("div");
+    h.id = "rwr-hint";
+    document.documentElement.appendChild(h);
+  }
+  h.innerHTML =
+    '<span class="rwr-hint-ico" aria-hidden="true">\u{1F4A1}</span>' +
+    `<span class="rwr-hint-text">Stuck? <b>${esc(race.target)}</b> \u2014 ${esc(desc)}</span>` +
+    '<button class="rwr-hint-x" type="button" aria-label="Dismiss hint">\u00D7</button>';
+  const x = h.querySelector(".rwr-hint-x");
+  if (x) x.addEventListener("click", () => {
+    try { sessionStorage.setItem(raceHintKey(race), "1"); } catch (_) {}
+    h.remove();
+  });
+}
+
+// Called every timer tick. Once the race passes HINT_AFTER_MS, fetch the target's
+// short description (Wikipedia REST summary - same origin, no extra permissions)
+// and show a dismissible nudge. Guards keep it to one fetch + one show per race,
+// persisted across same-tab hops so it doesn't re-pop on every page.
+async function maybeShowTargetHint(ms) {
+  if (hintDone || hintBusy) return;
+  const race = currentRace;
+  if (!race || race.finished || !race.target || ms < HINT_AFTER_MS) return;
+  try { if (sessionStorage.getItem(raceHintKey(race)) === "1") { hintDone = true; return; } } catch (_) {}
+  hintBusy = true;
+  try {
+    const cacheKey = "rwr_hint_desc_" + race.target;
+    let desc = "";
+    try { desc = sessionStorage.getItem(cacheKey) || ""; } catch (_) {}
+    if (!desc) {
+      const url = `${location.origin}/api/rest_v1/page/summary/` +
+        encodeURIComponent(race.target.replace(/ /g, "_"));
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) return; // transient (5xx / offline) - let a later tick retry
+      const data = await res.json();
+      desc = ((data && data.description) || "").trim();
+      // Fall back to the lead sentence only when there's no short description, so
+      // the nudge is never empty for the articles that lack one.
+      if (!desc && data && data.extract) {
+        desc = String(data.extract).split(". ")[0].trim();
+        if (desc.length > 160) desc = desc.slice(0, 157) + "\u2026";
+      }
+      try { if (desc) sessionStorage.setItem(cacheKey, desc); } catch (_) {}
+    }
+    hintDone = true; // got a definitive answer; don't refetch this page load
+    if (desc) showTargetHint(race, desc);
+  } catch (_) {
+    /* network hiccup - leave unshown so a later tick retries */
+  } finally {
+    hintBusy = false;
+  }
+}
+
+// Fires after the grace once the race tab has gone hidden during a match. If it's
+// still hidden (a real tab switch / minimize, not a same-tab navigation - those
+// unload the page and kill this timer), forfeit the match.
+async function onRaceTabLeft() {
+  leaveForfeitTimer = null;
+  if (!document.hidden) return;
+  const race = currentRace;
+  if (!race || !race.match_id || raceForfeited) return;
+  raceForfeited = true;
+  try { await send("forfeitMatch", { match_id: race.match_id }); } catch (_) {}
+  try { await send("clearRace"); } catch (_) {}
+  updateHud(null);
+  flash("You left the race tab - match forfeited.");
+}
+
+function startHeartbeat(matchId) {
+  if (heartbeatTimer && heartbeatMatchId === matchId) return;  // already pinging
+  stopHeartbeat();
+  heartbeatMatchId = matchId;
+  heartbeatTimer = setInterval(async () => {
+    const resp = await send("heartbeat", { match_id: matchId });
+    // Stop once the match is gone/resolved so we don't ping a dead match forever.
+    if (resp && resp.ok && resp.result && resp.result.alive === false) stopHeartbeat();
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  heartbeatMatchId = null;
+}
+
 function startTimer() {
   stopTimer();
   tick = setInterval(() => {
-    const el = document.getElementById("rwr-timer");
-    if (!el) return;
     const ms = timeBase.elapsed + (timeBase.running ? Date.now() - timeBase.at : 0);
-    el.textContent = fmt(ms);
+    const el = document.getElementById("rwr-timer");
+    if (el) el.textContent = fmt(ms);
+    maybeShowTargetHint(ms);
   }, 100);
 }
 function stopTimer() {
@@ -508,24 +644,32 @@ function applyRaceMode(active) {
 }
 
 function setHudButton(hud, race) {
-  // The single HUD action button is contextual: start a race when idle, abandon a
-  // solo run mid-race ("End race"), or forfeit a ranked/duo match (which the race
-  // carries a match_id for). The difficulty picker only matters when idle.
+  // The single HUD action button is contextual: "New race" when idle, "End race" to
+  // abandon a *solo* run mid-race, and hidden entirely during a ranked/duo match
+  // (which the race carries a match_id for) - that match's only Forfeit lives in the
+  // side panel, so the top bar can't be fat-fingered into abandoning it. The
+  // difficulty picker only matters when idle.
   const btn = hud.querySelector("#rwr-new");
   const diff = hud.querySelector("#rwr-diff");
   if (!btn) return;
   const active = !!(race && !race.finished);
   if (active && race.match_id) {
-    btn.textContent = "Forfeit";
-    btn.dataset.action = "forfeit";
-    btn.dataset.matchId = race.match_id;
-    btn.classList.add("rwr-danger");
+    // Ranked/duo match: the side panel owns the (confirmed) Forfeit. Keep the
+    // in-page top bar free of any race-ending button so it can't be fat-fingered
+    // into abandoning a live match.
+    btn.style.display = "none";
+    btn.dataset.action = "";
+    delete btn.dataset.matchId;
+    btn.classList.remove("rwr-danger");
   } else if (active) {
+    // Solo / daily / weekly: no opponent, so ending the run from the top bar is fine.
+    btn.style.display = "";
     btn.textContent = "End race";
     btn.dataset.action = "end";
     delete btn.dataset.matchId;
     btn.classList.remove("rwr-danger");
   } else {
+    btn.style.display = "";
     btn.textContent = "New race";
     btn.dataset.action = "new";
     delete btn.dataset.matchId;
@@ -537,6 +681,11 @@ function setHudButton(hud, race) {
 function updateHud(race, reveal) {
   const hud = ensureHud();
   raceActive = !!(race && !race.finished);
+  currentRace = raceActive ? race : null;
+  // Presence: ping the server while a MATCH is live so a closed/crashed tab gets
+  // force-forfeited; stop otherwise (solo races, and once finished/idle).
+  if (currentRace && currentRace.match_id) startHeartbeat(currentRace.match_id);
+  else stopHeartbeat();
   const resultsBtn = hud.querySelector("#rwr-results");
   setHudButton(hud, race);
   if (!race) {
@@ -547,6 +696,8 @@ function updateHud(race, reveal) {
     if (resultsBtn) resultsBtn.classList.add("rwr-hidden");
     timeBase = { elapsed: 0, at: 0, running: false };
     stopTimer();
+    removeTargetHint();
+    hintDone = false;
     applyRaceMode(false);
     return;
   }
@@ -572,6 +723,7 @@ function updateHud(race, reveal) {
   document.getElementById("rwr-timer").textContent = fmt(race.elapsed_ms);
   if (race.finished) {
     stopTimer();
+    removeTargetHint();
     // Only auto-open the modal on the *transition* to finished (this visit).
     // Later navigations come through init()'s else branch with reveal omitted, so
     // it won't re-pop on every page; the HUD's "Results" button reopens it.
@@ -617,6 +769,41 @@ async function init() {
     } catch (_) {}
   }, true);
 
+  // Back/forward cache restore: the page returns WITHOUT re-running this script, so
+  // report it explicitly as a back/forward hop (an illegal move the backend flags).
+  window.addEventListener("pageshow", (ev) => {
+    if (!ev.persisted) return;
+    const t = currentTitle();
+    if (!t) return;
+    send("visit", { title: t, links: collectLinks(), nav: "back_forward" })
+      .then((resp) => {
+        if (resp && resp.ok && resp.race) {
+          updateHud(resp.race, false);
+          if (resp.race.flagged && resp.race.legal === false) {
+            flash("Back/forward isn't a valid move - flagged.");
+          }
+        }
+      });
+  });
+
+  // Leaving the race tab during a MATCH (tab switch / minimize) is an auto-forfeit.
+  // The deferred check distinguishes a real tab switch (the page stays alive, so the
+  // timer fires while still hidden) from a same-tab navigation to the next article
+  // (the page unloads, killing the timer) - so legal hops never trip it.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (!currentRace || !currentRace.match_id) return;
+      clearTimeout(leaveForfeitTimer);
+      leaveForfeitTimer = setTimeout(onRaceTabLeft, LEAVE_GRACE_MS);
+    } else if (leaveForfeitTimer) {
+      clearTimeout(leaveForfeitTimer);
+      leaveForfeitTimer = null;
+      if (currentRace && currentRace.match_id && !raceForfeited) {
+        flash("Heads up - leaving the race tab counts as a forfeit.");
+      }
+    }
+  });
+
   const got = await send("getRace");
   const race = got.ok ? got.race : null;
   if (!race) {
@@ -627,12 +814,15 @@ async function init() {
   const title = currentTitle();
   if (title && !race.finished) {
     const via = readVia();
-    const resp = await send("visit", { title, links: collectLinks(), via: via.to, via_from: via.from });
+    const nav = navType();
+    const resp = await send("visit", { title, links: collectLinks(), via: via.to, via_from: via.from, nav });
     updateHud(resp.ok ? resp.race : race, true);
     if (resp.ok && resp.race && resp.race.path && resp.race.path.length >= 2) {
       const last = resp.race.path[resp.race.path.length - 1];
       if (resp.race.flagged && last === title && resp.race.legal === false) {
-        flash("That wasn't a link on the previous page - flagged.");
+        flash(nav === "back_forward"
+          ? "Back/forward isn't a valid move - flagged."
+          : "That wasn't a link on the previous page - flagged.");
       }
     }
   } else {

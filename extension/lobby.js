@@ -780,7 +780,13 @@ async function startRaceDirect(mode, start, target, matchId) {
   const data = await res.json();
   if (matchId) data.match_id = matchId;  // mirror newRace: tag ranked/duo races
   await chrome.storage.local.set({ race: data });
-  await chrome.tabs.create({ url: data.start_url });
+  // Navigate the active Wikipedia tab (the one this panel is docked to) so the panel
+  // stays open for the racing screen; fall back to a new tab only if we can't.
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab && tab.id != null) await chrome.tabs.update(tab.id, { url: data.start_url });
+    else await chrome.tabs.create({ url: data.start_url });
+  } catch (_) { await chrome.tabs.create({ url: data.start_url }); }
   return data;
 }
 
@@ -789,13 +795,16 @@ async function launchRace(match, mode) {
   // then bind that race to the match so the server scores the authoritative run.
   // Wrapped so a flaky worker wake can never strand the player on the countdown.
   //
-  // Persist the live match BEFORE opening the tab: opening it reloads this per-tab
-  // side panel, tearing down everything below, so in practice it's boot's
-  // restoreLiveMatch() that re-binds the race and shows the racing screen.
+  // Race in the CURRENT Wikipedia tab (newTab:false): the side panel is docked to the
+  // active tab, so navigating that tab keeps the panel open and lets enterRacing()
+  // show the racing screen in place. Opening a *new* tab left the panel behind on the
+  // old tab, so the player never saw the in-game view. Still persist the live match
+  // first as a backstop - if Chrome reloads the panel, boot's restoreLiveMatch()
+  // re-binds the race and re-shows the screen.
   try { await chrome.storage.local.set({ [LIVE_MATCH_KEY]: { match, at: Date.now() } }); } catch (_) {}
   try {
     let race = null;
-    const resp = await bg("newRace", { newTab: true, difficulty: mode, start: match.start, target: match.target, match_id: match.match_id });
+    const resp = await bg("newRace", { newTab: false, difficulty: mode, start: match.start, target: match.target, match_id: match.match_id });
     if (resp && resp.ok && resp.race) {
       race = resp.race;
     } else {

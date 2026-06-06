@@ -177,6 +177,33 @@ html.rwr-on .fundraising-banner {
 }
 #rwr-hud .rwr-hidden { display: none !important; }
 
+/* "Stuck?" hint: a tiny dismissible nudge showing the target's short description,
+   surfaced after a long race. Sits just under the fixed HUD, themed to match. */
+#rwr-hint {
+  position: fixed;
+  top: 60px; left: 50%; transform: translateX(-50%);
+  z-index: 2147483645;
+  display: flex; align-items: center; gap: 10px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 8px 8px 8px 14px;
+  background: var(--rwr-hud-bg); color: var(--rwr-text);
+  border: 1px solid var(--rwr-target-border);
+  border-left: 3px solid var(--rwr-target);
+  border-radius: 8px;
+  box-shadow: var(--rwr-hud-shadow);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+}
+#rwr-hint .rwr-hint-ico { flex: none; font-size: 14px; line-height: 1; }
+#rwr-hint .rwr-hint-text { min-width: 0; }
+#rwr-hint .rwr-hint-text b { color: var(--rwr-target); }
+#rwr-hint .rwr-hint-x {
+  flex: none; margin-left: 2px; padding: 2px 7px;
+  background: transparent; color: var(--rwr-muted);
+  border: 0; border-radius: 4px; cursor: pointer;
+  font-size: 16px; line-height: 1;
+}
+#rwr-hint .rwr-hint-x:hover { background: var(--rwr-x-hover); color: var(--rwr-text); }
+
 /* Idle (no active race): collapse to just the brand + controls - hide the
    "-  →  -" goal chips and the 0 clicks / 0.0s / par stats so the bar stays
    clean during normal browsing. */

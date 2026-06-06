@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WikiRyvals",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "WikiRyvals - ranked, competitive Wikiracing on live Wikipedia. Find your Ryval.",
   "permissions": ["storage", "tabs", "sidePanel"],
   "host_permissions": [

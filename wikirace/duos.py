@@ -410,7 +410,7 @@ class DuoMatchMaker:
         """Record a player's result; resolve once every human has submitted."""
         with self._lock:
             m = self._matches.get(match_id)
-            if not m:
+            if not m or m.resolved:
                 return None
             side = m.side_for(user_id)
             if side is None:
@@ -441,6 +441,55 @@ class DuoMatchMaker:
             "team_a": m.team_a, "team_b": m.team_b,
             "a_score": a_score,
         }
+
+    # ---- presence / abandonment ------------------------------------------
+    def heartbeat(self, match_id: str, user_id: str) -> bool:
+        """Mark a player as still present; False if the match is gone/resolved."""
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m or m.resolved:
+                return False
+            side = m.side_for(user_id)
+            if side is None:
+                return False
+            now = time.monotonic()
+            side.last_seen = now
+            m.last_touch = now
+            return True
+
+    def forfeit(self, match_id: str, user_id: str) -> dict | None:
+        """One player conceding doesn't end a 2v2 - the team can still win on a
+        teammate - so mark them out (a personal auto-loss) and resolve only once
+        every remaining human has submitted."""
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m or m.resolved:
+                return None
+            side = m.side_for(user_id)
+            if side is None:
+                return None
+            m.last_touch = time.monotonic()
+            side.submitted = True
+            side.finished = False
+            side.forfeited = True
+            if [s for s in m.human_sides() if not s.submitted]:
+                self._save(m)
+                return None
+            return self._resolve(m)
+
+    def timed_out_sides(self, now: float, timeout: float) -> list[tuple[str, str]]:
+        """(match_id, user_id) for every present-then-silent human side of a live
+        duo - a race tab that connected and then went away (closed/crashed)."""
+        out: list[tuple[str, str]] = []
+        with self._lock:
+            for mid, m in self._matches.items():
+                if m.resolved:
+                    continue
+                for side in m.human_sides():
+                    if (side.last_seen is not None
+                            and now - side.last_seen > timeout):
+                        out.append((mid, side.user_id))
+        return out
 
     # ---- housekeeping -----------------------------------------------------
     def _sweep(self) -> None:

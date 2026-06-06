@@ -181,18 +181,45 @@ async function forfeitMatch(matchId) {
   return await res.json();
 }
 
-async function reportVisit(title, links) {
+async function sendHeartbeat(matchId) {
+  // Presence ping from the live race tab so the server can detect a closed/crashed
+  // tab and force-forfeit it. Best-effort; never throws. `alive` is false once the
+  // match is gone/resolved, so the content script knows it can stop pinging.
+  try {
+    const { wr_token } = await chrome.storage.local.get("wr_token");
+    const res = await fetch(`${BACKEND}/api/ext/mm/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: wr_token || "", match_id: matchId }),
+    });
+    return res.ok ? await res.json() : { ok: false };
+  } catch (_) {
+    return { ok: false };
+  }
+}
+
+async function reportVisit(title, links, via, viaFrom, nav) {
   const race = await getRace();
   if (!race || race.finished) return race;
   const res = await fetch(`${BACKEND}/api/ext/visit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ race_id: race.race_id, title, links: links || [] }),
+    // Forward via/via_from so the server validates the *click* (a real on-page link)
+    // instead of the redirect it may resolve to, and nav so it can flag browser
+    // back/forward. These were being dropped here, which silently broke the whole
+    // redirect/anti-cheat path (the server always saw via=None).
+    body: JSON.stringify({
+      race_id: race.race_id, title, links: links || [],
+      via: via || null, via_from: viaFrom || null, nav: nav || null,
+    }),
   });
   if (!res.ok) return race;
   const data = await res.json();
-  // Preserve start_url across updates so the popup can still link to it.
+  // Preserve fields the server's race state doesn't echo back: start_url (so the
+  // popup can still link to it) and the match_id tag (so the in-page HUD keeps
+  // knowing this is a ranked/duo match instead of reverting to a solo "End race").
   data.start_url = race.start_url;
+  if (race.match_id) data.match_id = race.match_id;
   await setRace(data);
   return data;
 }
@@ -233,7 +260,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "weeklyRace") {
         sendResponse({ ok: true, race: await weeklyRace(msg.token, msg.newTab) });
       } else if (msg.type === "visit") {
-        sendResponse({ ok: true, race: await reportVisit(msg.title, msg.links) });
+        sendResponse({ ok: true, race: await reportVisit(msg.title, msg.links, msg.via, msg.via_from, msg.nav) });
       } else if (msg.type === "getRace") {
         sendResponse({ ok: true, race: await getRace() });
       } else if (msg.type === "clearRace") {
@@ -244,6 +271,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         setMatchHold(!!msg.active);
       } else if (msg.type === "forfeitMatch") {
         sendResponse({ ok: true, result: await forfeitMatch(msg.match_id) });
+      } else if (msg.type === "heartbeat") {
+        sendResponse({ ok: true, result: await sendHeartbeat(msg.match_id) });
       } else {
         sendResponse({ ok: false, error: "unknown message" });
       }
