@@ -241,9 +241,12 @@ class MatchMaker:
                 if m.resolved:
                     continue
                 self._matches[m.match_id] = m
+                now = time.monotonic()
                 for side in (m.a, m.b):
                     if side.race_id:
                         self._race_index[side.race_id] = m.match_id
+                        if side.user_id and not side.submitted:
+                            side.last_seen = now
                 n += 1
         return n
 
@@ -476,24 +479,35 @@ class MatchMaker:
 
     def spectate(self, match_id: str) -> dict | None:
         """Read-only, no-perspective view of a match for spectators/watch-party.
-        Includes each side's (opaque) user_id so a viewer can attribute live
-        progress events to the right player."""
+        Each side carries a redacted ``slot_id`` (never the account ``user_id``)
+        so a viewer can attribute live progress without exposing identities."""
         with self._lock:
             m = self._matches.get(match_id)
             if m is None:
                 return None
 
-            def p(side: Side) -> dict:
+            def p(side: Side, slot_id: str) -> dict:
                 d = side.public()
-                d["user_id"] = side.user_id
+                d["slot_id"] = slot_id
                 return d
 
             return {
                 "match_id": m.match_id, "kind": "1v1", "mode": m.mode,
                 "difficulty": m.difficulty, "start": m.start, "target": m.target,
                 "par": m.par, "resolved": m.resolved,
-                "players": [p(m.a), p(m.b)],
+                "players": [p(m.a, "p1"), p(m.b, "p2")],
             }
+
+    def spectator_slot(self, match_id: str, user_id: str) -> str | None:
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m:
+                return None
+            if m.a.user_id == user_id:
+                return "p1"
+            if m.b.user_id == user_id:
+                return "p2"
+            return None
 
     def race_of(self, match_id: str, user_id: str) -> str | None:
         with self._lock:
@@ -510,9 +524,11 @@ class MatchMaker:
                 return
             side = m.side_for(user_id)
             if side:
+                now = time.monotonic()
                 side.race_id = race_id
+                side.last_seen = now
                 self._race_index[race_id] = match_id
-                m.last_touch = time.monotonic()
+                m.last_touch = now
                 self._save(m)
 
     def submit(

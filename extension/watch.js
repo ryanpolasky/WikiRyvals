@@ -13,7 +13,7 @@ const MATCH_ID = params.get("match");
 
 let META = null;
 let SOCK = null;
-const PROGRESS = {};       // user_id -> latest progress msg
+const PROGRESS = {};       // slot_id -> latest progress msg
 const GHOST_KEY = "__ghost__";
 let ghostSeq = 0;
 
@@ -31,11 +31,13 @@ function setLive(on, text) {
   $("live").classList.toggle("on", !!on);
   $("live-text").textContent = text;
 }
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
 
 function playerCard(pl) {
-  // Live state for this player comes from PROGRESS keyed by their user_id; ghosts
-  // (user_id null) don't emit progress, so they read as "ghost".
-  const prog = pl.user_id ? PROGRESS[pl.user_id] : null;
+  // Live state for this player comes from PROGRESS keyed by their redacted slot.
+  const prog = pl.slot_id ? PROGRESS[pl.slot_id] : null;
   const div = document.createElement("div");
   div.className = "player";
   let badge = "";
@@ -43,15 +45,15 @@ function playerCard(pl) {
   if ((prog && prog.flagged) || pl.flagged) { div.classList.add("flagged"); badge = `<span class="p-badge badge-flag">FLAGGED</span>`; }
   const cur = pl.is_bot
     ? `<span class="pending">👻 ghost</span>`
-    : (prog && prog.current ? prog.current : `<span class="pending">waiting to start…</span>`);
+    : (prog && prog.current ? esc(prog.current) : `<span class="pending">waiting to start…</span>`);
   const clicks = prog ? prog.clicks : (pl.is_bot ? "-" : 0);
   const time = prog ? fmtTime(prog.elapsed_ms) : "-";
   div.innerHTML = `${badge}
     <div class="p-top">
-      <div class="p-av">${pl.is_bot ? "👻" : initials(pl.username)}</div>
+      <div class="p-av">${pl.is_bot ? "👻" : esc(initials(pl.username))}</div>
       <div>
-        <div class="p-name">${pl.username}</div>
-        <div class="p-team">${[pl.rp != null ? pl.rp + " EP" : "", pl.region].filter(Boolean).join(" · ")}</div>
+        <div class="p-name">${esc(pl.username)}</div>
+        <div class="p-team">${[pl.rp != null ? pl.rp + " EP" : "", pl.region ? esc(pl.region) : ""].filter(Boolean).join(" · ")}</div>
       </div>
     </div>
     <div class="p-cur">${cur}</div>
@@ -63,8 +65,8 @@ function render() {
   if (!META) return;
   const c = $("content");
   c.className = "";
-  const route = `<div class="route"><b>${META.start}</b><span class="arrow">→</span><b>${META.target}</b></div>` +
-    `<div class="meta">${META.difficulty}${META.par ? " · par " + META.par : ""} · ${META.kind === "duo" ? "Ranked Duos" : "Ranked 1v1"}</div>`;
+  const route = `<div class="route"><b>${esc(META.start)}</b><span class="arrow">→</span><b>${esc(META.target)}</b></div>` +
+    `<div class="meta">${esc(META.difficulty)}${META.par ? " · par " + META.par : ""} · ${META.kind === "duo" ? "Ranked Duos" : "Ranked 1v1"}</div>`;
   c.innerHTML = route;
 
   if (META.resolved && META.results) {
@@ -109,8 +111,8 @@ function connect() {
   SOCK.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (_) { return; }
-    if (msg.type === "progress" && msg.user_id) {
-      PROGRESS[msg.user_id] = msg;
+    if (msg.type === "progress" && msg.slot_id) {
+      PROGRESS[msg.slot_id] = msg;
       render();
     } else if (msg.type === "resolved") {
       if (META) { META.resolved = true; META.results = msg.results; }

@@ -118,7 +118,7 @@ function cbadgesHTML(tags, { compact = false } = {}) {
 // VS-card meta row: compact tag badges followed by the player's region.
 function vsMetaHTML(tags, region) {
   const badges = cbadgesHTML(tags, { compact: true });
-  const reg = region ? `<span class="vs-region">${region}</span>` : "";
+  const reg = region ? `<span class="vs-region">${esc(region)}</span>` : "";
   return badges + reg;
 }
 
@@ -132,16 +132,17 @@ const TIER_LABELS = ["Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond", 
 // tier-level crest (iron.svg). Falls back to the tier crest if no division.
 const DIVISIONED = new Set(["iron", "bronze", "silver", "gold", "plat", "diamond"]);
 function iconFor(slug, division) {
-  const s = slug || "iron";
-  if (division && DIVISIONED.has(s)) return `icons/ranks/${s}-${division}.svg`;
+  const s = TIER_SLUGS.includes(slug) ? slug : "iron";
+  const d = Number.parseInt(division, 10);
+  if (d && d >= 1 && d <= 3 && DIVISIONED.has(s)) return `icons/ranks/${s}-${d}.svg`;
   return `icons/ranks/${s}.svg`;
 }
 
 function rankBadgeHTML(rank) {
   if (!rank) return "";
-  const slug = rank.slug && rank.slug !== "unranked" ? rank.slug : "iron";
+  const slug = TIER_SLUGS.includes(rank.slug) ? rank.slug : "iron";
   const name = rank.name || (rank.tier || "Unranked");
-  return `<img class="rank-ic" src="${iconFor(slug, rank.division)}" alt="" /><span class="tier tier-${slug}">${name}</span>`;
+  return `<img class="rank-ic" src="${iconFor(slug, rank.division)}" alt="" /><span class="tier tier-${slug}">${esc(name)}</span>`;
 }
 
 // Client mirror of wikirace/ranks.py: map an EP (RP) total to its ladder rank so
@@ -177,9 +178,10 @@ function rankForRp(rp) {
 
 // Crest icon + "<rp> EP" for a VS player card's bottom row.
 function vsRankHTML(rp) {
-  const rk = rankForRp(rp);
-  return `<img class="vs-crest" src="${iconFor(rk.slug, rk.division)}" alt="" title="${rk.name}" />`
-    + `<span class="vs-ep">${rp} EP</span>`;
+  const safeRp = Math.max(0, Math.floor(Number(rp) || 0));
+  const rk = rankForRp(safeRp);
+  return `<img class="vs-crest" src="${iconFor(rk.slug, rk.division)}" alt="" title="${esc(rk.name)}" />`
+    + `<span class="vs-ep">${safeRp} EP</span>`;
 }
 
 // ---------------------------------------------------------------- screens
@@ -357,7 +359,7 @@ function showScreenAuth() { showOnly("screen-auth"); }
 function renderMe() {
   if (!ME) return;
   $("me-avatar").textContent = initials(ME.username);
-  $("me-name").innerHTML = (ME.username || "player") + cbadgesHTML(ME.tags, { compact: true });
+  $("me-name").innerHTML = esc(ME.username || "player") + cbadgesHTML(ME.tags, { compact: true });
   const rk = ME.rank || {};
   const placing = ME.in_placements;
   const promo = ME.promo || {};
@@ -473,7 +475,7 @@ function enterMatchSearching(format = "ranked") {
   $("vs-you-name").textContent = ME.username;
   $("vs-you-av").textContent = initials(ME.username);
   $("vs-you-meta").innerHTML = vsMetaHTML(ME.tags, ME.region);
-  $("vs-you-rank").innerHTML = vsRankHTML(ME.rp);
+    $("vs-you-rank").innerHTML = mate ? `with ${esc(mate.username)}${mate.is_bot ? " 👻" : ""}` : "";
   $("vs-opp-name").textContent = "…";
   $("vs-opp-av").textContent = "?";
   $("vs-opp-meta").innerHTML = "";
@@ -734,11 +736,11 @@ function beginMatch(match, mode) {
     const opps = match.opponents || [];
     const youTag = cbadgesHTML(match.you.tags, { compact: true });
     const mateTag = mate ? cbadgesHTML(mate.tags, { compact: true }) : "";
-    $("vs-you-name").innerHTML = `${match.you.username}${youTag}${mate ? " & " + mate.username + mateTag : ""}`;
+    $("vs-you-name").innerHTML = `${esc(match.you.username)}${youTag}${mate ? " & " + esc(mate.username) + mateTag : ""}`;
     $("vs-you-av").textContent = initials(match.you.username);
     $("vs-you-meta").innerHTML = "";
-    $("vs-you-rank").innerHTML = mate ? `with ${mate.username}${mate.is_bot ? " 👻" : ""}` : "";
-    $("vs-opp-name").innerHTML = opps.map((o) => o.username + cbadgesHTML(o.tags, { compact: true })).join(" & ") || "opponents";
+    $("vs-you-rank").innerHTML = mate ? `with ${esc(mate.username)}${mate.is_bot ? " 👻" : ""}` : "";
+    $("vs-opp-name").innerHTML = opps.map((o) => esc(o.username) + cbadgesHTML(o.tags, { compact: true })).join(" & ") || "opponents";
     $("vs-opp-av").textContent = "2";
     $("vs-opp-meta").innerHTML = "";
     const avgRp = opps.length ? Math.round(opps.reduce((a, o) => a + (o.rp || 0), 0) / opps.length) : 0;
@@ -748,7 +750,7 @@ function beginMatch(match, mode) {
     $("vs-you-name").textContent = match.you.username;
     $("vs-you-av").textContent = initials(match.you.username);
     $("vs-you-meta").innerHTML = vsMetaHTML(match.you.tags, match.you.region);
-    $("vs-you-rank").innerHTML = vsRankHTML(match.you.rp);
+    $("vs-you-rank").innerHTML = mate ? `with ${esc(mate.username)}${mate.is_bot ? " 👻" : ""}` : "";
     $("vs-opp-name").textContent = opp.username;
     $("vs-opp-av").textContent = initials(opp.username);
     $("vs-opp-meta").innerHTML = vsMetaHTML(opp.tags, opp.region);
@@ -851,10 +853,10 @@ function renderDuoHud() {
   const rows = Object.entries(DUO_ROSTER.players).map(([uid, p]) => {
     const pr = DUO_ROSTER.progress[uid];
     const tag = p.role === "teammate" ? "🤝" : "⚔";
-    const name = p.name + (p.ghost ? " 👻" : "");
+    const name = esc(p.name + (p.ghost ? " 👻" : ""));
     const state = pr
       ? (pr.finished ? `finished - ${pr.clicks} clicks · ${fmtTime(pr.elapsed_ms)}`
-                     : `${pr.current || "…"} · ${pr.clicks} clicks`)
+                     : `${esc(pr.current || "…")} · ${pr.clicks} clicks`)
       : (p.ghost ? "racing…" : "ready…");
     return `<div class="duo-hud-row"><span>${tag} ${name}</span><span>${state}</span></div>`;
   });
@@ -1004,7 +1006,7 @@ function renderDuoCompare(r) {
     ...opps.map((o) => ({ label: o.username + (o.is_bot ? " 👻" : ""), s: o })),
   ];
   const head = `<div class="cmp-row cmp-head cmp-duo"><span></span>${
-    cols.map((c, i) => `<span class="${i <= 1 ? "cmp-team" : "cmp-opp"}">${c.label}</span>`).join("")
+    cols.map((c, i) => `<span class="${i <= 1 ? "cmp-team" : "cmp-opp"}">${esc(c.label)}</span>`).join("")
   }</div>`;
   const cell = (s, f) => (s ? f(s) : "-");
   const row = (label, f) => `<div class="cmp-row cmp-duo"><span>${label}</span>${
@@ -1030,7 +1032,7 @@ function showResult(r) {
   $("result-banner").textContent = draw ? "Draw"
     : (won ? (isDuo ? "Team Victory" : "Victory") : (isDuo ? "Team Defeat" : "Defeat"));
   $("result-banner").className = "result-banner " + (draw ? "draw" : (won ? "win" : "loss"));
-  $("result-route").innerHTML = `<b>${r.start}</b> → <b>${r.target}</b>`;
+  $("result-route").innerHTML = `<b>${esc(r.start)}</b> → <b>${esc(r.target)}</b>`;
 
   const d = r.rp.delta;
   $("rp-delta").textContent = (d > 0 ? "+" : "") + d;
@@ -1070,7 +1072,7 @@ function showResult(r) {
   const promoEl = $("result-promo");
   if (pr.entered && pr.target_name) {
     promoEl.className = "promo-note armed";
-    promoEl.innerHTML = `⚑ <b>Promotion series!</b> Held at 99% - win your next ranked match to reach <b>${pr.target_name}</b>. Lose it and you drop the normal amount.`;
+    promoEl.innerHTML = `⚑ <b>Promotion series!</b> Held at 99% - win your next ranked match to reach <b>${esc(pr.target_name)}</b>. Lose it and you drop the normal amount.`;
     promoEl.hidden = false;
   } else if (pr.won) {
     promoEl.className = "promo-note won";
@@ -1089,7 +1091,7 @@ function showResult(r) {
   } else {
     const you = r.you, opp = r.opponent;
     $("result-compare").innerHTML = `
-      <div class="cmp-row cmp-head"><span></span><span>You</span><span>${opp.username}${opp.is_bot ? " 👻" : ""}</span></div>
+      <div class="cmp-row cmp-head"><span></span><span>You</span><span>${esc(opp.username)}${opp.is_bot ? " 👻" : ""}</span></div>
       <div class="cmp-row"><span>Result</span><span>${you.finished ? "Finished" : "DNF"}</span><span>${opp.finished ? "Finished" : "DNF"}</span></div>
       <div class="cmp-row"><span>Clicks</span><span>${you.clicks ?? "-"}</span><span>${opp.clicks ?? "-"}</span></div>
       <div class="cmp-row"><span>Time</span><span>${fmtTime(you.time_ms)}</span><span>${fmtTime(opp.time_ms)}</span></div>
@@ -1415,7 +1417,7 @@ async function toggleDailyBoard() {
         const me = ME && r.username === ME.username ? " is-me" : "";
         li.className = "daily-row" + me;
         li.innerHTML = `<span class="dr-pos">${r.position}</span>` +
-                       `<span class="dr-name">${r.username || "-"}${cbadgesHTML(r.tags, { compact: true })}</span>` +
+                       `<span class="dr-name">${esc(r.username || "-")}${cbadgesHTML(r.tags, { compact: true })}</span>` +
                        `<span class="dr-stat">${stat}${r.flagged ? " ⚑" : ""}</span>`;
         el.appendChild(li);
       }
@@ -1468,7 +1470,7 @@ async function toggleWeeklyBoard() {
         const me = ME && r.username === ME.username ? " is-me" : "";
         li.className = "daily-row" + me;
         li.innerHTML = `<span class="dr-pos">${r.position}</span>` +
-                       `<span class="dr-name">${r.username || "-"}${cbadgesHTML(r.tags, { compact: true })}</span>` +
+                       `<span class="dr-name">${esc(r.username || "-")}${cbadgesHTML(r.tags, { compact: true })}</span>` +
                        `<span class="dr-stat">${stat}${r.flagged ? " ⚑" : ""}</span>`;
         el.appendChild(li);
       }
@@ -1538,7 +1540,7 @@ async function loadLeaderboard() {
       const placing = e.in_placements;
       const tier = placing ? `<span class="tier tier-iron">Placements</span>` : rankBadgeHTML(rk);
       return `<div class="li${mine ? " me-highlight" : ""}"><span class="rank">${e.position}</span>
-        <div class="li-main"><b>${e.username}${cbadgesHTML(e.tags, { compact: true })}${mine ? ' <span class="you">you</span>' : ""}</b>
+        <div class="li-main"><b>${esc(e.username)}${cbadgesHTML(e.tags, { compact: true })}${mine ? ' <span class="you">you</span>' : ""}</b>
         <span class="li-sub">${tier} · ${e.rp} EP</span></div>
         <span class="li-end">${e.wins}W ${e.losses}L</span></div>`;
     }).join("");
@@ -1556,8 +1558,8 @@ async function loadHistory() {
     list.innerHTML = r.matches.map((m) => {
       const res = m.result === "win" ? `<span class="win">Win</span>` : (m.result === "draw" ? `<span class="flag">Draw</span>` : (m.result === "loss" && m.time_ms ? `<span class="loss">Loss</span>` : `<span class="loss">DNF</span>`));
       const rp = m.mode === "ranked" ? ` · <span class="${m.rp_delta >= 0 ? "win" : "loss"}">${m.rp_delta >= 0 ? "+" : ""}${m.rp_delta} EP</span>` : ` · <span class="li-sub">private</span>`;
-      const vs = m.opponent ? ` vs ${m.opponent}${m.opponent_bot ? " 👻" : ""}` : "";
-      return `<div class="li"><div class="li-main"><b>${m.start} → ${m.target}</b>
+      const vs = m.opponent ? ` vs ${esc(m.opponent)}${m.opponent_bot ? " 👻" : ""}` : "";
+      return `<div class="li"><div class="li-main"><b>${esc(m.start)} → ${esc(m.target)}</b>
         <span class="li-sub">${res}${rp} · ${m.clicks ?? "-"} clicks · ${fmtTime(m.time_ms)}${m.par ? " · par " + m.par : ""}${vs}</span></div></div>`;
     }).join("");
   } catch (e) { list.className = "list is-empty"; list.innerHTML = `<p class="preview-tag">Couldn't load history.</p>`; }
@@ -1592,7 +1594,7 @@ async function loadProfile() {
   if (!ME) return;
   await refreshMe();
   $("pf-avatar").textContent = initials(ME.username);
-  $("pf-name").innerHTML = (ME.username || "player") + cbadgesHTML(ME.tags);
+  $("pf-name").innerHTML = esc(ME.username || "player") + cbadgesHTML(ME.tags);
   $("admin-card").hidden = !ME.is_admin;
   const placing = ME.in_placements;
   $("pf-rank").innerHTML = placing
@@ -1621,7 +1623,7 @@ async function loadProfile() {
   $("pf-progress").style.width = pct + "%";
   $("pf-progress-label").innerHTML = placing
     ? `Finish ${ME.placements_left} placement match${ME.placements_left === 1 ? "" : "es"} to get ranked.`
-    : (rk.next_name ? `<b>${rk.rp_to_next}</b> EP to <b>${rk.next_name}</b>.` : `You're at the apex. Find your Ryval.`);
+    : (rk.next_name ? `<b>${rk.rp_to_next}</b> EP to <b>${esc(rk.next_name)}</b>.` : `You're at the apex. Find your Ryval.`);
 }
 
 // If a ranked/duo match was live when Chrome reloaded the panel (it reloads the

@@ -105,7 +105,8 @@ def _href_to_title(href: str) -> str | None:
     # Accept Parsoid "./Title", site-relative "/wiki/Title", and absolute en.wp links.
     if href.startswith("//") or href.startswith("http"):
         parsed = urllib.parse.urlparse(href)
-        if "wikipedia.org" not in parsed.netloc:
+        host = (parsed.hostname or "").lower()
+        if host != "en.wikipedia.org":
             return None
         if not parsed.path.startswith("/wiki/"):
             return None
@@ -146,6 +147,14 @@ def sanitize(html: str) -> tuple[str, list[str]]:
 
     links: list[str] = []
     seen: set[str] = set()
+    for tag in soup.find_all(True):
+        for attr in list(tag.attrs):
+            name = attr.lower()
+            val = tag.get(attr)
+            vals = val if isinstance(val, list) else [val]
+            if name.startswith("on") or any(str(v).strip().lower().startswith("javascript:") for v in vals):
+                tag.attrs.pop(attr, None)
+
     for a in soup.find_all("a"):
         if a.decomposed:
             continue

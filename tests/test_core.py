@@ -62,6 +62,23 @@ def test_sanitize_extracts_only_article_links():
     assert html.count('class="wr-link"') == 3
 
 
+def test_sanitize_strips_scriptable_attributes_and_non_en_wiki_links():
+    html, links = sanitize("""
+    <html><body>
+      <p onclick="alert(1)"><a href="javascript:alert(1)" onmouseover="x()">bad</a></p>
+      <a href="https://evil.example/wiki/Bad">evil</a>
+      <a href="https://fr.wikipedia.org/wiki/Paris">fr</a>
+      <a href="https://en.wikipedia.org/wiki/Paris">Paris</a>
+    </body></html>
+    """)
+    assert links == ["Paris"]
+    assert "javascript:" not in html
+    assert "onclick" not in html
+    assert "onmouseover" not in html
+    assert "evil.example" not in html
+    assert "fr.wikipedia.org" not in html
+
+
 def test_shortest_hops():
     adj = {"A": ["B", "C"], "B": ["D"], "C": ["D"], "D": ["E"], "E": []}
     assert shortest_hops(adj, "A", "A") == 0
@@ -215,6 +232,20 @@ def test_match_payload_exposes_opponent_tags():
     assert Match.from_dict(blob).b.tags == ["beta_tester"]
 
 
+def test_spectate_uses_redacted_slots():
+    mm = _mm()
+    t1 = mm.enqueue(_user("u1", 1500), "any")
+    mm.enqueue(_user("u2", 1520), "any")
+    out = mm.poll(t1.ticket_id)
+    spec = mm.spectate(out["match"]["match_id"])
+    assert [p["slot_id"] for p in spec["players"]] == ["p1", "p2"]
+    assert all("user_id" not in p for p in spec["players"])
+    assert mm.spectator_slot(out["match"]["match_id"], "u1") == "p1"
+    # Non-participants get no slot - the ws_match auth guard relies on this to
+    # keep authenticated strangers off the raw participant channel.
+    assert mm.spectator_slot(out["match"]["match_id"], "stranger") is None
+
+
 def test_poll_reports_searching_count():
     mm = _mm()
     t1 = mm.enqueue(_user("u1", 1500), "any")
@@ -228,9 +259,12 @@ def test_poll_reports_searching_count():
 def test_matchmaking_solo_keeps_searching_without_opponent():
     mm = _mm()
     t = mm.enqueue(_user("solo", 1500), "any")
-    # No bot/ghost fallback: even after a long wait, a lone queuer never matches.
-    mm._tickets[t.ticket_id].enqueued_at -= 600
-    mm.poll(t.ticket_id)
+    # No bot/ghost fallback: a lone queuer is never auto-matched against a
+    # synthetic opponent. Age it but stay under TICKET_TTL so it isn't reaped
+    # as an abandoned search.
+    mm._tickets[t.ticket_id].enqueued_at -= 30
+    out = mm.poll(t.ticket_id)
+    assert out["status"] == "searching"
     assert mm._tickets[t.ticket_id].match_id is None
     assert mm._tickets[t.ticket_id].status == "searching"
 
@@ -404,7 +438,7 @@ def test_match_serialization_round_trips():
 def test_match_for_race_reverse_lookup():
     mm = _mm()
     t = mm.enqueue(_user("solo", 1500), "any")
-    mm._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
+    mm.enqueue(_user("opp", 1510), "any")
     match = mm.poll(t.ticket_id)["match"]
     mid = match["match_id"]
     mm.bind_race(mid, "solo", "race-xyz")
@@ -721,7 +755,8 @@ def test_daily_prompt_is_deterministic_per_date():
 def test_season_autocreates_and_rolls_over(tmp_path):
     store = AccountStore(path=tmp_path / "acc.sqlite3")
     s1 = store.current_season()
-    assert s1["label"] == "Season 1" and s1["status"] == "active"
+    # First use seeds the beta season ("Season 0") - see _active_season_locked.
+    assert s1["label"] == "Season 0" and s1["status"] == "active"
 
     # Two players with different standings before rollover.
     u1 = store.verify_login_code("a@b.com", store.issue_login_code("a@b.com"))
@@ -744,7 +779,7 @@ def test_season_autocreates_and_rolls_over(tmp_path):
     # Final standings of S1 archived, veteran on top with a tier reward.
     standings = store.season_standings(s1["id"])
     assert standings[0]["username"] == "veteran" and standings[0]["position"] == 1
-    assert standings[0]["reward"] and "(Season 1)" in standings[0]["reward"]
+    assert standings[0]["reward"] and "(Season 0)" in standings[0]["reward"]
 
     # Soft reset: RP halved, rating compressed toward the mean, placements reopened.
     vet_after = store.get_user(u1["id"])
@@ -781,17 +816,29 @@ def test_duos_groups_four_into_two_balanced_teams():
     assert abs(avg_a - avg_b) <= 30
 
 
-def test_duos_ghost_fills_a_short_queue():
+def test_duos_spectate_uses_redacted_slots():
+    mm = _dmm()
+    t1 = mm.enqueue(_user("u1", 1500), "any")
+    mm.enqueue(_user("u2", 1480), "any")
+    mm.enqueue(_user("u3", 1520), "any")
+    mm.enqueue(_user("u4", 1510), "any")
+    out = mm.poll(t1.ticket_id)
+    spec = mm.spectate(out["match"]["match_id"])
+    assert mm.spectator_slot(out["match"]["match_id"], "stranger") is None
+    assert [p["slot_id"] for p in spec["players"]] == ["a1", "a2", "b1", "b2"]
+    assert all("user_id" not in p for p in spec["players"])
+    assert mm.spectator_slot(out["match"]["match_id"], "u1") is not None
+
+
+def test_duos_short_queue_keeps_searching():
     mm = _dmm()
     t = mm.enqueue(_user("solo", 1500), "any")
-    mm._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
+    # A short queue can't fill a 2v2 and there's no ghost fallback, so the lone
+    # queuer keeps searching. Stay under TICKET_TTL so it isn't reaped.
+    mm._tickets[t.ticket_id].enqueued_at -= 30
     out = mm.poll(t.ticket_id)
-    assert out["status"] == "found"
-    m = out["match"]
-    match = mm._matches[m["match_id"]]
-    # Four seats total, exactly one human (the soloist), three ghosts.
-    assert len(match.all_sides()) == 4
-    assert sum(1 for s in match.all_sides() if s.user_id is None) == 3
+    assert out["status"] == "searching"
+    assert mm._tickets[t.ticket_id].match_id is None
 
 
 def test_duos_team_wins_on_fastest_finisher():
@@ -849,7 +896,9 @@ def test_duos_match_serialization_round_trips():
 
     mm = _dmm()
     t = mm.enqueue(_user("solo", 1500), "any")
-    mm._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
+    mm.enqueue(_user("u2", 1500), "any")
+    mm.enqueue(_user("u3", 1500), "any")
+    mm.enqueue(_user("u4", 1500), "any")
     m = mm.poll(t.ticket_id)["match"]
     original = mm._matches[m["match_id"]]
     original.team_a[0].race_id = "race-x"
@@ -875,7 +924,9 @@ def test_duos_persist_and_restore_only_duo_blobs(tmp_path):
                         par_fn=lambda s, t: 3, on_persist=store.save_active_match,
                         on_forget=store.delete_active_match)
     t = duo.enqueue(_user("solo", 1500), "any")
-    duo._tickets[t.ticket_id].enqueued_at -= GHOST_AFTER_SECONDS + 1
+    duo.enqueue(_user("u2", 1500), "any")
+    duo.enqueue(_user("u3", 1500), "any")
+    duo.enqueue(_user("u4", 1500), "any")
     duo.poll(t.ticket_id)
 
     blobs = store.load_active_matches()
@@ -967,21 +1018,21 @@ def test_duos_party_seats_friends_on_the_same_team():
     assert {"s1", "s2"} in team_ids
 
 
-def test_duos_party_ghost_fills_opposing_pair():
+def test_duos_party_waits_for_opposing_pair():
     mm = _dmm()
     p = "party-1"
     t1 = mm.enqueue(_user("f1", 1500), "any", party_id=p)
     mm.enqueue(_user("f2", 1520), "any", party_id=p)
-    # No opponents show up: party waits past the ghost threshold then fills.
-    for t in mm._tickets.values():
-        t.enqueued_at -= GHOST_AFTER_SECONDS + 1
+    out = mm.poll(t1.ticket_id)
+    assert out["status"] == "searching"
+    mm.enqueue(_user("s1", 1505), "any")
+    mm.enqueue(_user("s2", 1495), "any")
     out = mm.poll(t1.ticket_id)
     assert out["status"] == "found"
     match = mm._matches[out["match"]["match_id"]]
     team_ids = [{s.user_id for s in match.team_a}, {s.user_id for s in match.team_b}]
-    # Friends together; the opposing seats are ghosts (user_id None).
     assert {"f1", "f2"} in team_ids
-    assert {None} in team_ids
+    assert {"s1", "s2"} in team_ids
 
 
 # --- Admin + account tagging -----------------------------------------------

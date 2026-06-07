@@ -190,9 +190,12 @@ class DuoMatchMaker:
                 if m.resolved:
                     continue
                 self._matches[m.match_id] = m
+                now = time.monotonic()
                 for side in m.all_sides():
                     if side.race_id:
                         self._race_index[side.race_id] = m.match_id
+                        if side.user_id and not side.submitted:
+                            side.last_seen = now
                 n += 1
         return n
 
@@ -365,23 +368,38 @@ class DuoMatchMaker:
             if m is None:
                 return None
 
-            def p(side: Side) -> dict:
+            def p(side: Side, slot_id: str) -> dict:
                 d = side.public()
-                d["user_id"] = side.user_id
+                d["slot_id"] = slot_id
                 return d
 
+            team_a = [p(s, f"a{i + 1}") for i, s in enumerate(m.team_a)]
+            team_b = [p(s, f"b{i + 1}") for i, s in enumerate(m.team_b)]
             return {
                 "match_id": m.match_id, "kind": "duo", "mode": m.mode,
                 "difficulty": m.difficulty, "start": m.start, "target": m.target,
                 "par": m.par, "resolved": m.resolved,
-                "team_a": [p(s) for s in m.team_a],
-                "team_b": [p(s) for s in m.team_b],
-                "players": [p(s) for s in m.all_sides()],
+                "team_a": team_a,
+                "team_b": team_b,
+                "players": [*team_a, *team_b],
             }
 
     def has_match(self, match_id: str) -> bool:
         with self._lock:
             return match_id in self._matches
+
+    def spectator_slot(self, match_id: str, user_id: str) -> str | None:
+        with self._lock:
+            m = self._matches.get(match_id)
+            if not m:
+                return None
+            for i, side in enumerate(m.team_a):
+                if side.user_id == user_id:
+                    return f"a{i + 1}"
+            for i, side in enumerate(m.team_b):
+                if side.user_id == user_id:
+                    return f"b{i + 1}"
+            return None
 
     def race_of(self, match_id: str, user_id: str) -> str | None:
         with self._lock:
@@ -398,9 +416,11 @@ class DuoMatchMaker:
                 return
             side = m.side_for(user_id)
             if side:
+                now = time.monotonic()
                 side.race_id = race_id
+                side.last_seen = now
                 self._race_index[race_id] = match_id
-                m.last_touch = time.monotonic()
+                m.last_touch = now
                 self._save(m)
 
     def submit(

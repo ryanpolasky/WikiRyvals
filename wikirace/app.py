@@ -34,13 +34,14 @@ from .duos import DuoMatchMaker, _team_best
 from .matchmaking import MatchMaker, Side
 from .play_graph import PLAY_GRAPH_PATH, PlayGraph
 from .ranks import compute_rp, rank_for_rp
-from .realtime import hub
+from .realtime import MatchHub, hub
 from .snapshot_store import PROMPTS_PATH, SnapshotStore
 from .wiki import _is_article_title, normalize_title
 
 WIKI_BASE = "https://en.wikipedia.org/wiki/"
 
 app = FastAPI(title="WikiRyvals - Phase 0")
+spectator_hub = MatchHub()
 # The extension routes calls through its background worker (extension origin), but
 # allow-all CORS keeps direct content-script fetches working in dev too.
 app.add_middleware(
@@ -128,6 +129,7 @@ def _startup() -> None:
     # Let the realtime hub publish onto the serving loop from sync handlers.
     try:
         hub.bind_loop(asyncio.get_running_loop())
+        spectator_hub.bind_loop(asyncio.get_running_loop())
     except RuntimeError:
         pass
     # Rehydrate any live matches that were mid-flight when we last stopped
@@ -1387,6 +1389,14 @@ def _route_race_update(race: "ExtRace", *, is_hop: bool) -> None:
         "elapsed_ms": race.elapsed_ms, "finished": race.finished,
         "flagged": race.flagged,
     })
+    slot_id = (duo_matchmaker if is_duo else matchmaker).spectator_slot(match_id, user_id)
+    if slot_id:
+        spectator_hub.publish(match_id, {
+            "type": "progress", "slot_id": slot_id,
+            "current": race.current, "clicks": race.clicks,
+            "elapsed_ms": race.elapsed_ms, "finished": race.finished,
+            "flagged": race.flagged,
+        })
     if race.finished:
         _auto_resolve(match_id, user_id, race, is_duo=is_duo)
 
@@ -1398,6 +1408,7 @@ def _auto_resolve(match_id: str, user_id: str, race: "ExtRace",
     if match_id in RANKED_RESULTS:
         # Already resolved (e.g. someone finished first) - re-push for late joiners.
         hub.publish(match_id, {"type": "resolved", "results": RANKED_RESULTS[match_id]})
+        spectator_hub.publish(match_id, {"type": "resolved", "results": {"complete": True}})
         return
     maker = duo_matchmaker if is_duo else matchmaker
     resolution = maker.submit(
@@ -1409,7 +1420,7 @@ def _auto_resolve(match_id: str, user_id: str, race: "ExtRace",
     (_finalize_duo if is_duo else _finalize)(resolution)
     hub.publish(match_id, {"type": "resolved",
                            "results": RANKED_RESULTS.get(match_id, {})})
-
+    spectator_hub.publish(match_id, {"type": "resolved", "results": {"complete": True}})
 
 def _forfeit_match(match_id: str, user_id: str, *, is_duo: bool) -> None:
     """Force-concede ``user_id`` (their race tab went away) and push the result to
@@ -1423,7 +1434,7 @@ def _forfeit_match(match_id: str, user_id: str, *, is_duo: bool) -> None:
     (_finalize_duo if is_duo else _finalize)(resolution)
     hub.publish(match_id, {"type": "resolved",
                            "results": RANKED_RESULTS.get(match_id, {})})
-
+    spectator_hub.publish(match_id, {"type": "resolved", "results": {"complete": True}})
 
 def _draw_match(match_id: str) -> None:
     """Both 1v1 sides went silent at once - resolve as a no-contest draw."""
@@ -1435,6 +1446,7 @@ def _draw_match(match_id: str) -> None:
     _finalize(resolution)
     hub.publish(match_id, {"type": "resolved",
                            "results": RANKED_RESULTS.get(match_id, {})})
+    spectator_hub.publish(match_id, {"type": "resolved", "results": {"complete": True}})
 
 
 def _sweep_match_presence() -> None:
@@ -1478,8 +1490,14 @@ async def ws_match(websocket: WebSocket, match_id: str, token: str | None = None
     Inbound client messages are ignored (the race tab reports via /visit)."""
     user = accounts.user_by_token(token or "")
     uid = user["id"] if user else None
-    m = matchmaker.get_match(match_id, uid) or duo_matchmaker.get_match(match_id, uid)
-    if user is None or m is None:
+    # Only actual participants may join the authoritative match channel - it
+    # carries raw user_ids and full per-side results. Everyone else (including
+    # authenticated non-participants) must use the redacted /ws/spectate feed.
+    in_match = uid is not None and (
+        matchmaker.spectator_slot(match_id, uid) is not None
+        or duo_matchmaker.spectator_slot(match_id, uid) is not None
+    )
+    if not in_match:
         await websocket.close(code=4401)
         return
     await websocket.accept()
@@ -1501,13 +1519,14 @@ async def ws_match(websocket: WebSocket, match_id: str, token: str | None = None
 @app.get("/api/ext/spectate/{match_id}")
 def ext_spectate(match_id: str) -> dict:
     """Read-only match metadata for the watch-party page (no auth - anyone with
-    the link can watch). Returns players + route; live positions arrive over the
-    spectate WebSocket. Includes the final results once the match resolves."""
+    the link can watch). Returns players (redacted slot_ids only) + route; live
+    positions arrive over the spectate WebSocket. Exposes only a completion flag
+    once the match resolves, never per-player result detail."""
     meta = matchmaker.spectate(match_id) or duo_matchmaker.spectate(match_id)
     if meta is None:
         raise HTTPException(404, "No such match (it may have ended and been swept).")
     if match_id in RANKED_RESULTS:
-        meta["results"] = RANKED_RESULTS[match_id]
+        meta["results"] = {"complete": True}
     return meta
 
 
@@ -1521,16 +1540,16 @@ async def ws_spectate(websocket: WebSocket, match_id: str) -> None:
         await websocket.close(code=4404)
         return
     await websocket.accept()
-    await hub.connect(match_id, websocket)
+    await spectator_hub.connect(match_id, websocket)
     try:
         if match_id in RANKED_RESULTS:
-            await websocket.send_json({"type": "resolved", "results": RANKED_RESULTS[match_id]})
+            await websocket.send_json({"type": "resolved", "results": {"complete": True}})
         while True:
             await websocket.receive_text()  # spectators send nothing meaningful
     except WebSocketDisconnect:
         pass
     finally:
-        await hub.disconnect(match_id, websocket)
+        await spectator_hub.disconnect(match_id, websocket)
 
 
 @app.get("/api/ext/mm/match/{match_id}/events")

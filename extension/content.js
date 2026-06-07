@@ -441,11 +441,13 @@ function startHeartbeat(matchId) {
   if (heartbeatTimer && heartbeatMatchId === matchId) return;  // already pinging
   stopHeartbeat();
   heartbeatMatchId = matchId;
-  heartbeatTimer = setInterval(async () => {
+  const ping = async () => {
     const resp = await send("heartbeat", { match_id: matchId });
     // Stop once the match is gone/resolved so we don't ping a dead match forever.
     if (resp && resp.ok && resp.result && resp.result.alive === false) stopHeartbeat();
-  }, HEARTBEAT_MS);
+  };
+  ping();
+  heartbeatTimer = setInterval(ping, HEARTBEAT_MS);
 }
 
 function stopHeartbeat() {

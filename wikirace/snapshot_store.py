@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 from pathlib import Path
 
 import requests
@@ -34,10 +35,13 @@ def _safe_name(title: str) -> str:
 def save_article(article: Article, directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / _safe_name(article.title)
-    path.write_text(json.dumps(
+    payload = json.dumps(
         {"title": article.title, "html": article.html, "links": article.links},
         ensure_ascii=False,
-    ), encoding="utf-8")
+    )
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(path)
 
 
 def _load_article(directory: Path, title: str) -> Article | None:
@@ -52,7 +56,7 @@ class SnapshotStore:
     def __init__(self) -> None:
         self.adjacency: dict[str, list[str]] = {}
         self.titles: list[str] = []
-        self._session = requests.Session()
+        self._lock = threading.Lock()
         RUNTIME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ---- snapshot loading -------------------------------------------------
@@ -73,15 +77,16 @@ class SnapshotStore:
         art = _load_article(PAGES_DIR, title)
         if art is not None:
             return art
-        art = _load_article(RUNTIME_CACHE_DIR, title)
-        if art is not None:
+        with self._lock:
+            art = _load_article(RUNTIME_CACHE_DIR, title)
+            if art is not None:
+                return art
+            try:
+                art = fetch_article(title)
+            except requests.RequestException:
+                return None
+            save_article(art, RUNTIME_CACHE_DIR)
             return art
-        try:
-            art = fetch_article(title, session=self._session)
-        except requests.RequestException:
-            return None
-        save_article(art, RUNTIME_CACHE_DIR)
-        return art
 
     def links_of(self, title: str) -> list[str]:
         """Valid outgoing links for move validation.
