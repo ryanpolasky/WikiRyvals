@@ -347,9 +347,19 @@
           <p class="preview-tag" id="pf-progress-label"></p>
         </div>
         <div class="card admin-card" id="admin-card" hidden>
-          <h3>Admin</h3>
-          <p>You have admin access - search accounts and manage tags (beta testers, perks, cosmetics).</p>
-          <button class="btn-primary" id="open-admin">Open admin dashboard</button>
+          <div class="card-top"><h3>Admin tools</h3><span class="pill pill-live">Admin only</span></div>
+          <p>Launch an isolated practice match against a controllable bot. Bot Lab never changes EP, rating, placements, stats, streaks, or history.</p>
+          <div class="bot-lab-launch">
+            <select id="bot-lab-difficulty" aria-label="Bot Lab difficulty">
+              <option value="any">Adaptive route</option>
+              <option value="easy">Easy route</option>
+              <option value="medium">Medium route</option>
+              <option value="hard">Hard route</option>
+            </select>
+            <button class="btn-primary" id="start-bot-match">Launch Bot Lab</button>
+          </div>
+          <p class="hint" id="bot-lab-hint"></p>
+          <button class="btn-secondary" id="open-admin">Manage accounts &amp; tags</button>
         </div>
       </section>
     </main>

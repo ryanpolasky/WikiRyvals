@@ -254,6 +254,17 @@ class DuoMatchMaker:
         with self._lock:
             self._tickets.pop(ticket_id, None)
 
+    def cancel_waiting(self, user_id: str) -> None:
+        with self._lock:
+            for tid in [tid for tid, ticket in self._tickets.items()
+                        if ticket.user_id == user_id and ticket.status == "searching"]:
+                self._tickets.pop(tid, None)
+
+    def has_active_match(self, user_id: str) -> bool:
+        with self._lock:
+            return any(not m.resolved and m.side_for(user_id) is not None
+                       for m in self._matches.values())
+
     def _waited(self, t: Ticket) -> float:
         return time.monotonic() - t.enqueued_at
 
@@ -359,7 +370,9 @@ class DuoMatchMaker:
     def get_match(self, match_id: str, user_id: str | None = None) -> dict | None:
         with self._lock:
             m = self._matches.get(match_id)
-            return m.public(user_id) if m else None
+            if m is None or (user_id is not None and m.side_for(user_id) is None):
+                return None
+            return m.public(user_id)
 
     def spectate(self, match_id: str) -> dict | None:
         """Read-only, no-perspective view of a duos match for the watch-party."""
@@ -409,19 +422,25 @@ class DuoMatchMaker:
             side = m.side_for(user_id)
             return side.race_id if side else None
 
-    def bind_race(self, match_id: str, user_id: str, race_id: str) -> None:
+    def bind_race(self, match_id: str, user_id: str, race_id: str) -> bool:
         with self._lock:
             m = self._matches.get(match_id)
-            if not m:
-                return
+            if not m or m.resolved:
+                return False
             side = m.side_for(user_id)
-            if side:
-                now = time.monotonic()
-                side.race_id = race_id
-                side.last_seen = now
-                self._race_index[race_id] = match_id
-                m.last_touch = now
-                self._save(m)
+            bound_match_id = self._race_index.get(race_id)
+            if (side is None or (bound_match_id is not None and bound_match_id != match_id)
+                    or any(s is not side and s.race_id == race_id for s in m.all_sides())):
+                return False
+            now = time.monotonic()
+            if side.race_id and side.race_id != race_id:
+                self._race_index.pop(side.race_id, None)
+            side.race_id = race_id
+            side.last_seen = now
+            self._race_index[race_id] = match_id
+            m.last_touch = now
+            self._save(m)
+            return True
 
     def submit(
         self, match_id: str, user_id: str, *,

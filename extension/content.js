@@ -284,9 +284,25 @@ function ensureHud() {
       </select>
       <button id="rwr-new">New race</button>
     </div>
+    <section id="rwr-bot-lab" class="rwr-bot-lab rwr-hidden" aria-label="Bot Lab controls">
+      <div class="rwr-bot-head">
+        <span class="rwr-bot-title"><span class="rwr-bot-dot"></span>Bot Lab</span>
+        <span class="rwr-bot-state" id="rwr-bot-state">Connecting…</span>
+      </div>
+      <div class="rwr-bot-actions">
+        <button type="button" data-bot-action="advance">Advance 1 page</button>
+        <button type="button" data-bot-action="finish" class="rwr-bot-finish">Find target clean</button>
+        <button type="button" data-bot-action="flag" class="rwr-bot-flag">Flag cheating</button>
+      </div>
+    </section>
     <div id="rwr-flash" class="rwr-flash rwr-hidden"></div>`;
   ensureSketchyDefs();
   document.documentElement.appendChild(hud);
+  const syncHudHeight = () => {
+    document.documentElement.style.setProperty("--rwr-hud-height", `${Math.ceil(hud.getBoundingClientRect().height)}px`);
+  };
+  syncHudHeight();
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncHudHeight).observe(hud);
   hud.querySelector("#rwr-new").addEventListener("click", async (ev) => {
     const btn = ev.currentTarget;
     const action = btn.dataset.action || "new";
@@ -322,6 +338,9 @@ function ensureHud() {
     const r = await send("getRace");
     if (r.ok && r.race && r.race.finished) renderWin(r.race);
   });
+  hud.querySelectorAll("[data-bot-action]").forEach((btn) => {
+    btn.addEventListener("click", () => runBotAction(hud, btn.dataset.botAction));
+  });
   syncThemeButton();
   return hud;
 }
@@ -355,6 +374,74 @@ function flash(msg) {
   f.classList.remove("rwr-hidden");
   clearTimeout(flash._t);
   flash._t = setTimeout(() => f.classList.add("rwr-hidden"), 2400);
+}
+
+function botStateText(bot) {
+  const place = bot.current || bot.start || "unknown page";
+  if (bot.finished && bot.flagged) return `Finished · flagged · ${bot.clicks} clicks`;
+  if (bot.finished) return `Finished clean · ${bot.clicks} clicks · ${fmt(bot.elapsed_ms || 0)}`;
+  if (bot.flagged) return `Cheat flag armed · ${place} · ${bot.clicks} clicks`;
+  if (!bot.clicks) return `Idle · ${place}`;
+  return `Racing · ${place} · ${bot.clicks} clicks`;
+}
+
+function applyBotState(hud, bot, resolved) {
+  const lab = hud.querySelector("#rwr-bot-lab");
+  const state = hud.querySelector("#rwr-bot-state");
+  if (!lab || !state || !bot) return;
+  state.textContent = resolved ? `Match resolved · ${botStateText(bot)}` : botStateText(bot);
+  lab.classList.toggle("rwr-bot-flagged", !!bot.flagged);
+  lab.querySelectorAll("[data-bot-action]").forEach((btn) => {
+    btn.disabled = !!resolved || (btn.dataset.botAction === "advance" && bot.finished)
+      || (btn.dataset.botAction === "finish" && bot.finished)
+      || (btn.dataset.botAction === "flag" && bot.flagged);
+  });
+}
+
+async function runBotAction(hud, action) {
+  const lab = hud.querySelector("#rwr-bot-lab");
+  const matchId = lab && lab.dataset.matchId;
+  if (!matchId || !action) return;
+  const buttons = Array.from(lab.querySelectorAll("[data-bot-action]"));
+  buttons.forEach((btn) => { btn.disabled = true; });
+  const state = hud.querySelector("#rwr-bot-state");
+  if (state) state.textContent = action === "advance" ? "Calculating next legal page…"
+    : action === "finish" ? "Solving shortest known route…" : "Applying anti-cheat flag…";
+  const resp = await send("debugBotAction", { match_id: matchId, action });
+  if (!resp || !resp.ok || !resp.result || !resp.result.bot) {
+    buttons.forEach((btn) => { btn.disabled = false; });
+    if (state) state.textContent = (resp && resp.error) || "Bot control failed.";
+    flash("Bot Lab command failed.");
+    return;
+  }
+  applyBotState(hud, resp.result.bot, resp.result.resolved);
+  flash(action === "advance" ? `Bot advanced to ${resp.result.bot.current}.`
+    : action === "finish" ? "Bot found the target with a clean route."
+    : "Bot is now flagged and cannot win cleanly.");
+}
+
+function syncBotLab(hud, race) {
+  const lab = hud.querySelector("#rwr-bot-lab");
+  if (!lab) return;
+  const active = !!(race && race.debug_bot && race.match_id);
+  lab.classList.toggle("rwr-hidden", !active);
+  hud.classList.toggle("rwr-has-bot-lab", active);
+  if (!active) {
+    delete lab.dataset.matchId;
+    delete lab.dataset.syncedMatch;
+    return;
+  }
+  lab.dataset.matchId = race.match_id;
+  if (lab.dataset.syncedMatch === race.match_id) return;
+  lab.dataset.syncedMatch = race.match_id;
+  send("debugBotAction", { match_id: race.match_id, action: "status" }).then((resp) => {
+    if (resp && resp.ok && resp.result && resp.result.bot) {
+      applyBotState(hud, resp.result.bot, resp.result.resolved);
+    } else {
+      const state = hud.querySelector("#rwr-bot-state");
+      if (state) state.textContent = (resp && resp.error) || "Bot status unavailable.";
+    }
+  });
 }
 
 function raceHintKey(race) {
@@ -571,6 +658,7 @@ function renderWin(race) {
     document.documentElement.appendChild(ov);
   }
   const clean = !race.flagged;
+  const isMatch = !!race.match_id;
   const v = verdict(race.clicks, race.optimal_hops);
   ov.innerHTML = `
     <div class="rwr-win-card" role="dialog" aria-modal="true">
@@ -580,7 +668,7 @@ function renderWin(race) {
       </div>
       <div class="rwr-win-hero ${clean ? "rwr-clean" : "rwr-flagged"}">
         <div class="rwr-win-emoji">${clean ? "🏁" : "⚠️"}</div>
-        <div class="rwr-win-title">${clean ? "Target reached" : "Finished - flagged"}</div>
+        <div class="rwr-win-title">${clean ? (isMatch ? "Run submitted" : "Target reached") : "Finished - flagged"}</div>
         <div class="rwr-win-route">
           <span class="rwr-pc rwr-pc-start">${esc(race.start)}</span>
           <span class="rwr-pc-arrow">→</span>
@@ -599,9 +687,9 @@ function renderWin(race) {
         <div class="rwr-win-pathlabel">Your route</div>
         <div class="rwr-win-path">${pathChips(race.path, race.target)}</div>
       </div>
-      <button class="rwr-win-cta" id="rwr-mp">Make a free account to play multiplayer &rarr;</button>
+      <button class="rwr-win-cta" id="rwr-mp">${isMatch ? "Open match panel &rarr;" : "Make a free account to play multiplayer &rarr;"}</button>
       <div class="rwr-win-actions">
-        <button class="rwr-btn-primary" id="rwr-again">New race</button>
+        ${isMatch ? "" : '<button class="rwr-btn-primary" id="rwr-again">New race</button>'}
         <button class="rwr-btn-ghost" id="rwr-dismiss">Keep reading</button>
       </div>
     </div>`;
@@ -609,7 +697,8 @@ function renderWin(race) {
     ov.remove();
     await send("newRace", { difficulty: "any" });
   };
-  ov.querySelector("#rwr-again").addEventListener("click", newRace);
+  const again = ov.querySelector("#rwr-again");
+  if (again) again.addEventListener("click", newRace);
   ov.querySelector("#rwr-dismiss").addEventListener("click", () => ov.remove());
   ov.querySelector("#rwr-close").addEventListener("click", () => ov.remove());
   ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
@@ -618,11 +707,13 @@ function renderWin(race) {
   const mp = ov.querySelector("#rwr-mp");
   if (mp) {
     mp.addEventListener("click", () => { send("openSidePanel"); });
-    try {
-      chrome.storage.local.get(["wr_token"], (r) => {
-        if (r && r.wr_token) mp.textContent = "Open the lobby to play 1v1 & duos \u2192";
-      });
-    } catch (_) {}
+    if (!isMatch) {
+      try {
+        chrome.storage.local.get(["wr_token"], (r) => {
+          if (r && r.wr_token) mp.textContent = "Open the lobby to play 1v1 & duos \u2192";
+        });
+      } catch (_) {}
+    }
   }
   // Celebrate a clean, par-or-better solo run - the only "special" solo finish.
   if (clean && v.cls === "great") fireConfetti({ root: document.documentElement });
@@ -690,6 +781,7 @@ function updateHud(race, reveal) {
   else stopHeartbeat();
   const resultsBtn = hud.querySelector("#rwr-results");
   setHudButton(hud, race);
+  syncBotLab(hud, race);
   if (!race) {
     // No active race: collapse the bar to just the brand + controls, hiding the
     // goal chips and the clicks/timer/par stats (see .rwr-idle in content.css).

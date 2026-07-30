@@ -243,6 +243,28 @@ $("open-admin").addEventListener("click", () => {
   try { chrome.tabs.create({ url }); } catch (_) { window.open(url, "_blank"); }
 });
 
+$("start-bot-match").addEventListener("click", async () => {
+  const btn = $("start-bot-match");
+  const status = $("bot-lab-hint");
+  btn.disabled = true;
+  status.className = "hint";
+  status.textContent = "Building an isolated practice match…";
+  try {
+    const data = await api("/api/ext/admin/bot-match", {
+      method: "POST",
+      auth: true,
+      body: { difficulty: $("bot-lab-difficulty").value },
+    });
+    status.className = "hint ok";
+    status.textContent = "Bot ready. Opening match…";
+    beginMatch(data.match, "practice");
+  } catch (e) {
+    status.className = "hint err";
+    status.textContent = e.message || "Could not start Bot Lab.";
+    btn.disabled = false;
+  }
+});
+
 // ================================================================ AUTH
 
 function authErr(msg) {
@@ -727,9 +749,10 @@ let CURRENT_MATCH = null;
 function beginMatch(match, mode) {
   CURRENT_MATCH = match;
   const isDuo = mode === "duo" || match.team_kind === "duo";
-  const inPromo = mode !== "private" && ME && ME.promo && ME.promo.in_promo;
+  const isPractice = mode === "practice" || match.mode === "practice";
+  const inPromo = !isPractice && mode !== "private" && ME && ME.promo && ME.promo.in_promo;
   $("match-mode").textContent = (isDuo ? "Duos Match Found"
-    : (mode === "private" ? "Private Match" : "Match Found"))
+    : (isPractice ? "Bot Lab" : (mode === "private" ? "Private Match" : "Match Found")))
     + (inPromo ? " · ⚑ PROMO GAME" : "");
   if (isDuo) {
     const mate = match.teammate;
@@ -750,8 +773,8 @@ function beginMatch(match, mode) {
     $("vs-you-name").textContent = match.you.username;
     $("vs-you-av").textContent = initials(match.you.username);
     $("vs-you-meta").innerHTML = vsMetaHTML(match.you.tags, match.you.region);
-    $("vs-you-rank").innerHTML = mate ? `with ${esc(mate.username)}${mate.is_bot ? " 👻" : ""}` : "";
-    $("vs-opp-name").textContent = opp.username;
+    $("vs-you-rank").innerHTML = vsRankHTML(match.you.rp);
+    $("vs-opp-name").textContent = opp.username + (opp.is_bot ? " 🤖" : "");
     $("vs-opp-av").textContent = initials(opp.username);
     $("vs-opp-meta").innerHTML = vsMetaHTML(opp.tags, opp.region);
     $("vs-opp-rank").innerHTML = vsRankHTML(opp.rp);
@@ -774,7 +797,7 @@ function beginMatch(match, mode) {
 // has storage + tabs + backend host permissions) when the background service
 // worker is asleep/wedged and won't answer. Mirrors background.js newRace so the
 // content script picks up the same race state from chrome.storage.
-async function startRaceDirect(mode, start, target, matchId) {
+async function startRaceDirect(mode, start, target, matchId, deferNavigation) {
   let url = `${BACKEND}/api/ext/new?difficulty=${encodeURIComponent(mode || "any")}`;
   if (start && target) url += `&start=${encodeURIComponent(start)}&target=${encodeURIComponent(target)}`;
   const res = await fetch(url, { method: "POST" });
@@ -784,11 +807,13 @@ async function startRaceDirect(mode, start, target, matchId) {
   await chrome.storage.local.set({ race: data });
   // Navigate the active Wikipedia tab (the one this panel is docked to) so the panel
   // stays open for the racing screen; fall back to a new tab only if we can't.
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (tab && tab.id != null) await chrome.tabs.update(tab.id, { url: data.start_url });
-    else await chrome.tabs.create({ url: data.start_url });
-  } catch (_) { await chrome.tabs.create({ url: data.start_url }); }
+  if (!deferNavigation) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (tab && tab.id != null) await chrome.tabs.update(tab.id, { url: data.start_url });
+      else await chrome.tabs.create({ url: data.start_url });
+    } catch (_) { await chrome.tabs.create({ url: data.start_url }); }
+  }
   return data;
 }
 
@@ -806,21 +831,25 @@ async function launchRace(match, mode) {
   try { await chrome.storage.local.set({ [LIVE_MATCH_KEY]: { match, at: Date.now() } }); } catch (_) {}
   try {
     let race = null;
-    const resp = await bg("newRace", { newTab: false, difficulty: mode, start: match.start, target: match.target, match_id: match.match_id });
+    const resp = await bg("newRace", { newTab: false, deferNavigation: true, difficulty: mode, start: match.start, target: match.target, match_id: match.match_id });
     if (resp && resp.ok && resp.race) {
       race = resp.race;
     } else {
       // Worker didn't answer (MV3 eviction). Launch directly from the page.
-      race = await startRaceDirect(mode, match.start, match.target, match.match_id);
+      race = await startRaceDirect(mode, match.start, match.target, match.match_id, true);
     }
     if (!race || !race.race_id) {
       hint("Couldn't open the race tab - back to lobby, try again.", "err");
       backToLobby();
       return;
     }
-    try {
-      await api("/api/ext/mm/bind", { method: "POST", auth: true, body: { match_id: match.match_id, race_id: race.race_id } });
-    } catch (e) { /* non-fatal: result poll will report no race */ }
+    await api("/api/ext/mm/bind", { method: "POST", auth: true, body: { match_id: match.match_id, race_id: race.race_id } });
+    const opened = await bg("openRace", { newTab: false });
+    if (!opened || !opened.ok) {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (tab && tab.id != null) await chrome.tabs.update(tab.id, { url: race.start_url });
+      else await chrome.tabs.create({ url: race.start_url });
+    }
     enterRacing(match);
   } catch (e) {
     hint("Couldn't start the race. The backend may be unavailable.", "err");
@@ -1060,7 +1089,9 @@ function showResult(r) {
     $("result-rank-name").textContent = "Unranked match";
     $("result-rank-next").textContent = "";
     $("result-rank-fill").style.width = "0%";
-    $("result-rank-rp").textContent = "Private lobbies don't affect your rank.";
+    $("result-rank-rp").textContent = r.mode === "practice"
+      ? "Bot Lab is isolated from rank, stats, streaks, and history."
+      : "Private lobbies don't affect your rank.";
   }
 
   // MMR (Glicko) is hidden from players - EP is the only public number, and its
@@ -1091,7 +1122,7 @@ function showResult(r) {
   } else {
     const you = r.you, opp = r.opponent;
     $("result-compare").innerHTML = `
-      <div class="cmp-row cmp-head"><span></span><span>You</span><span>${esc(opp.username)}${opp.is_bot ? " 👻" : ""}</span></div>
+      <div class="cmp-row cmp-head"><span></span><span>You</span><span>${esc(opp.username)}${opp.is_bot ? " 🤖" : ""}</span></div>
       <div class="cmp-row"><span>Result</span><span>${you.finished ? "Finished" : "DNF"}</span><span>${opp.finished ? "Finished" : "DNF"}</span></div>
       <div class="cmp-row"><span>Clicks</span><span>${you.clicks ?? "-"}</span><span>${opp.clicks ?? "-"}</span></div>
       <div class="cmp-row"><span>Time</span><span>${fmtTime(you.time_ms)}</span><span>${fmtTime(opp.time_ms)}</span></div>
@@ -1596,6 +1627,9 @@ async function loadProfile() {
   $("pf-avatar").textContent = initials(ME.username);
   $("pf-name").innerHTML = esc(ME.username || "player") + cbadgesHTML(ME.tags);
   $("admin-card").hidden = !ME.is_admin;
+  $("start-bot-match").disabled = false;
+  $("bot-lab-hint").textContent = "";
+  $("bot-lab-hint").className = "hint";
   const placing = ME.in_placements;
   $("pf-rank").innerHTML = placing
     ? `<span class="tier tier-iron">Placements</span> · ${ME.placements_left} left · ${ME.rp} EP`

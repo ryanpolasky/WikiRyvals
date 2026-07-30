@@ -57,6 +57,30 @@ def shortest_hops_via(neighbors: Callable[[str], Iterable[str]], start: str,
     return None
 
 
+def shortest_path_via(neighbors: Callable[[str], Iterable[str]], start: str,
+                      target: str, max_depth: int = 6) -> list[str] | None:
+    if start == target:
+        return [start]
+    parents: dict[str, str | None] = {start: None}
+    frontier: deque[tuple[str, int]] = deque([(start, 0)])
+    while frontier:
+        node, depth = frontier.popleft()
+        if depth >= max_depth:
+            continue
+        for nxt in sorted(set(neighbors(node))):
+            if nxt in parents:
+                continue
+            parents[nxt] = node
+            if nxt == target:
+                path = [target]
+                while parents[path[-1]] is not None:
+                    path.append(parents[path[-1]])
+                path.reverse()
+                return path
+            frontier.append((nxt, depth + 1))
+    return None
+
+
 def in_degrees(adjacency: dict[str, list[str]]) -> dict[str, int]:
     deg: dict[str, int] = {n: 0 for n in adjacency}
     for links in adjacency.values():

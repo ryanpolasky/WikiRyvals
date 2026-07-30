@@ -83,14 +83,14 @@ html.rwr-light {
   box-shadow: var(--rwr-hud-shadow);
 }
 /* Push Wikipedia down so the fixed HUD doesn't cover the page top. */
-html { scroll-padding-top: 52px; }
-body { margin-top: 52px !important; }
+html { scroll-padding-top: var(--rwr-hud-height, 52px); }
+body { margin-top: var(--rwr-hud-height, 52px) !important; }
 
 /* "Pull tab" pinned to the right edge (just under the HUD) that opens the
    WikiRyvals side panel - a discoverable alternative to the toolbar icon. */
 #rwr-pulltab {
   position: fixed;
-  top: 66px;
+  top: calc(var(--rwr-hud-height, 52px) + 14px);
   right: -8px; /* extend past the viewport edge so the hover slide never reveals the cut right edge */
   z-index: 2147483640;
   display: flex;
@@ -171,17 +171,43 @@ html.rwr-on .fundraising-banner {
 #rwr-hud #rwr-new { background: var(--rwr-accent); color: var(--rwr-accent-ink); font-weight: 700; border: none; }
 #rwr-hud #rwr-new.rwr-danger { background: #d83a3a; color: #fff; }
 #rwr-hud .rwr-flash {
-  position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
+  position: fixed; top: calc(var(--rwr-hud-height, 52px) + 6px); left: 50%; transform: translateX(-50%);
   background: #5a1d1d; color: #ffd9d9; border: 1px solid #a33;
   padding: 7px 13px; border-radius: 2px; z-index: 2147483647; font-size: 13px;
 }
 #rwr-hud .rwr-hidden { display: none !important; }
+#rwr-hud .rwr-bot-lab {
+  position: fixed; top: calc(var(--rwr-hud-height, 52px) + 8px); right: 16px;
+  z-index: 2147483645; box-sizing: border-box; width: min(470px, calc(100vw - 32px));
+  padding: 10px; background: var(--rwr-hud-bg); color: var(--rwr-text);
+  border: 1px solid var(--rwr-accent); border-radius: 10px; box-shadow: var(--rwr-hud-shadow);
+}
+#rwr-hud .rwr-bot-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+#rwr-hud .rwr-bot-title { display: inline-flex; align-items: center; gap: 6px; flex: none; font-weight: 800; }
+#rwr-hud .rwr-bot-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rwr-start); box-shadow: 0 0 0 3px var(--rwr-great-bg); }
+#rwr-hud .rwr-bot-state { min-width: 0; margin-left: auto; color: var(--rwr-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rwr-hud .rwr-bot-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+#rwr-hud .rwr-bot-actions button { min-width: 0; border-radius: 7px; padding: 7px 9px; font-size: 12px; font-weight: 700; }
+#rwr-hud .rwr-bot-actions button:hover:not(:disabled) { background: var(--rwr-ghost-bg-hover); }
+#rwr-hud .rwr-bot-actions .rwr-bot-finish { background: var(--rwr-accent); color: var(--rwr-accent-ink); border-color: transparent; }
+#rwr-hud .rwr-bot-actions .rwr-bot-flag { color: var(--rwr-target); border-color: var(--rwr-target-border); }
+#rwr-hud .rwr-bot-actions button:disabled { opacity: .45; cursor: not-allowed; }
+#rwr-hud .rwr-bot-lab.rwr-bot-flagged { border-color: var(--rwr-target); }
+#rwr-hud .rwr-bot-lab.rwr-bot-flagged .rwr-bot-dot { background: var(--rwr-target); box-shadow: 0 0 0 3px var(--rwr-warn-bg); }
+#rwr-hud.rwr-has-bot-lab ~ #rwr-pulltab { top: calc(var(--rwr-hud-height, 52px) + 116px); }
+
+@media (max-width: 560px) {
+  #rwr-hud .rwr-bot-lab { left: 8px; right: 8px; width: auto; }
+  #rwr-hud .rwr-bot-state { white-space: normal; text-align: right; line-height: 1.25; }
+  #rwr-hud .rwr-bot-actions { grid-template-columns: 1fr; }
+  #rwr-hud.rwr-has-bot-lab ~ #rwr-pulltab { top: calc(var(--rwr-hud-height, 52px) + 188px); }
+}
 
 /* "Stuck?" hint: a tiny dismissible nudge showing the target's short description,
    surfaced after a long race. Sits just under the fixed HUD, themed to match. */
 #rwr-hint {
   position: fixed;
-  top: 60px; left: 50%; transform: translateX(-50%);
+  top: calc(var(--rwr-hud-height, 52px) + 8px); left: 50%; transform: translateX(-50%);
   z-index: 2147483645;
   display: flex; align-items: center; gap: 10px;
   max-width: min(560px, calc(100vw - 32px));

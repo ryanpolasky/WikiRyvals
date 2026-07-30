@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .accounts import ACCOUNTS_PATH, REVIEW_EMAIL, AccountError, AccountStore, RateLimitError
-from .graph import induced_adjacency, shortest_hops, shortest_hops_via
+from .graph import induced_adjacency, shortest_hops, shortest_hops_via, shortest_path_via
 from .glicko2 import Rating, rate_1v1
 from .duos import DuoMatchMaker, _team_best
 from .matchmaking import MatchMaker, Side
@@ -74,7 +74,9 @@ def _clean_links(raw: list[str] | None) -> list[str]:
         return []
     out: list[str] = []
     seen: set[str] = set()
-    for r in raw:
+    for r in raw[:10000]:
+        if not isinstance(r, str) or len(r) > 512:
+            continue
         t = normalize_title(r)
         if t and _is_article_title(t) and t not in seen:
             seen.add(t)
@@ -178,6 +180,10 @@ class ExtRace:
     # that page (latest observation). Used to detect a "missed win".
     links_seen: dict[str, list[str]] = field(default_factory=dict)
     missed_win: dict | None = None
+    debug_bot: bool = False
+    debug_owner_id: str | None = None
+    owner_user_id: str | None = None
+    bound_match_id: str | None = None
     # When set, this race is today's daily challenge for a specific player; the
     # first finished daily attempt is recorded as their official board entry.
     daily_date: str | None = None
@@ -253,6 +259,7 @@ def _ext_state(race: ExtRace) -> dict:
         "target_url": wiki_url(race.target),
         "path": race.path,
         "missed_win": race.missed_win,
+        "debug_bot": race.debug_bot,
     }
 
 
@@ -283,6 +290,7 @@ def _compute_missed_win(race: ExtRace) -> dict | None:
 class ExtVisitRequest(BaseModel):
     race_id: str
     title: str
+    token: str | None = None
     links: list[str] | None = None
     # The article link the player actually clicked, and the page they clicked it
     # from. Lets the server validate the click (always a real on-page link) rather
@@ -349,6 +357,10 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     race = EXT_RACES.get(req.race_id)
     if race is None:
         raise HTTPException(404, "Unknown race.")
+    if race.owner_user_id is not None:
+        user = _require_user(req.token)
+        if user["id"] != race.owner_user_id:
+            raise HTTPException(403, "This race belongs to another player.")
     race.last_touch = time.monotonic()
     title = normalize_title(req.title)
 
@@ -538,6 +550,11 @@ def _require_admin(token: str | None, authorization: str | None = None) -> dict:
     if not user.get("is_admin"):
         raise HTTPException(403, "Admins only.")
     return user
+
+
+def _require_no_active_practice(*user_ids: str) -> None:
+    if any(matchmaker.has_active_practice(user_id) for user_id in user_ids):
+        raise HTTPException(409, "Finish or leave Bot Lab before starting another match.")
 
 
 def _email_html(heading: str, body_html: str) -> str:
@@ -949,6 +966,17 @@ class AdminTagReq(BaseModel):
     tag: str
 
 
+class AdminBotMatchReq(BaseModel):
+    token: str | None = None
+    difficulty: str | None = "any"
+
+
+class AdminBotActionReq(BaseModel):
+    token: str | None = None
+    match_id: str
+    action: str
+
+
 @app.get("/api/ext/admin/accounts")
 def admin_accounts(q: str = "", token: str | None = None,
                    authorization: str | None = Header(default=None)) -> dict:
@@ -977,6 +1005,105 @@ def admin_untag(req: AdminTagReq,
     except AccountError as e:
         raise HTTPException(400, str(e))
     return {"ok": True, **res}
+
+
+@app.post("/api/ext/admin/bot-match")
+def admin_bot_match(req: AdminBotMatchReq,
+                    authorization: str | None = Header(default=None)) -> dict:
+    admin = _require_admin(req.token, authorization)
+    if admin.get("needs_username"):
+        raise HTTPException(400, "Pick a username before starting Bot Lab.")
+    if (matchmaker.has_active_nonpractice_match(admin["id"])
+            or duo_matchmaker.has_active_match(admin["id"])):
+        raise HTTPException(409, "Finish your current match before starting Bot Lab.")
+    matchmaker.cancel_waiting(admin["id"])
+    duo_matchmaker.cancel_waiting(admin["id"])
+    _sweep_races()
+    for rid, race in list(EXT_RACES.items()):
+        if race.debug_owner_id == admin["id"]:
+            EXT_RACES.pop(rid, None)
+    match = matchmaker.create_bot_match(admin, req.difficulty or "any")
+    race_id = uuid.uuid4().hex
+    bot_race = ExtRace(
+        race_id=race_id,
+        start=match.start,
+        target=match.target,
+        difficulty=match.difficulty,
+        optimal_hops=match.par,
+        current=match.start,
+        path=[match.start],
+        started_at=time.monotonic(),
+        debug_bot=True,
+        debug_owner_id=admin["id"],
+    )
+    EXT_RACES[race_id] = bot_race
+    if not matchmaker.bind_race(match.match_id, match.b.user_id, race_id):
+        EXT_RACES.pop(race_id, None)
+        raise HTTPException(500, "Could not initialize the Bot Lab race.")
+    bot_race.bound_match_id = match.match_id
+    return {
+        "ok": True,
+        "match": match.public(admin["id"]),
+        "bot": _ext_state(bot_race),
+    }
+
+
+@app.post("/api/ext/admin/bot-action")
+def admin_bot_action(req: AdminBotActionReq,
+                     authorization: str | None = Header(default=None)) -> dict:
+    admin = _require_admin(req.token, authorization)
+    action = (req.action or "").strip().lower()
+    if action not in {"status", "advance", "finish", "flag"}:
+        raise HTTPException(400, "Unknown Bot Lab action.")
+    ctx = matchmaker.practice_context(req.match_id, admin["id"])
+    if ctx is None:
+        raise HTTPException(404, "No Bot Lab match owned by this admin.")
+    race = EXT_RACES.get(ctx["bot_race_id"] or "")
+    if race is None:
+        raise HTTPException(410, "The Bot Lab race expired. Start a new one.")
+    if ctx["resolved"] and action != "status":
+        raise HTTPException(409, "This Bot Lab match is already resolved.")
+    if action == "advance":
+        if race.finished:
+            raise HTTPException(409, "The bot already finished.")
+        route = shortest_path_via(_merged_neighbors, race.current, race.target, max_depth=6)
+        neighbors = sorted(_merged_neighbors(race.current))
+        nxt = route[1] if route and len(route) > 1 else next(
+            (title for title in neighbors if title != race.current), None)
+        if nxt is None:
+            raise HTTPException(409, "No known outgoing page is available for this bot.")
+        race.links_seen[race.current] = neighbors
+        race.current = nxt
+        race.path.append(nxt)
+        if nxt == race.target:
+            race.finished = True
+            race.finished_at = time.monotonic()
+            race.missed_win = _compute_missed_win(race)
+    elif action == "finish":
+        if not race.finished:
+            route = shortest_path_via(_merged_neighbors, race.current, race.target, max_depth=6)
+            if route is None:
+                raise HTTPException(409, "No known legal route to the target is available for this bot.")
+            remaining = route[1:]
+            for nxt in remaining:
+                race.links_seen[race.current] = sorted(_merged_neighbors(race.current))
+                race.current = nxt
+                race.path.append(nxt)
+            race.finished = True
+            race.finished_at = time.monotonic()
+            race.missed_win = _compute_missed_win(race)
+    elif action == "flag":
+        race.flagged = True
+    race.last_touch = time.monotonic()
+    if action != "status":
+        _route_race_update(race, is_hop=action in {"advance", "finish"})
+    return {
+        "ok": True,
+        "match_id": req.match_id,
+        "resolved": bool(RANKED_RESULTS.get(req.match_id)),
+        "bot": _ext_state(race),
+        "result": RANKED_RESULTS.get(req.match_id, {}).get(admin["id"]),
+    }
 
 
 # ---- ranked matchmaking ---------------------------------------------------
@@ -1012,6 +1139,7 @@ def mm_enqueue(req: EnqueueReq) -> dict:
     user = _require_user(req.token)
     if user.get("needs_username"):
         raise HTTPException(400, "Pick a username before queuing.")
+    _require_no_active_practice(user["id"])
     ticket = matchmaker.enqueue(user, req.difficulty or "any")
     return {"ok": True, "ticket_id": ticket.ticket_id}
 
@@ -1032,6 +1160,7 @@ def mm_duo_enqueue(req: EnqueueReq) -> dict:
     user = _require_user(req.token)
     if user.get("needs_username"):
         raise HTTPException(400, "Pick a username before queuing.")
+    _require_no_active_practice(user["id"])
     ticket = duo_matchmaker.enqueue(user, req.difficulty or "any")
     return {"ok": True, "ticket_id": ticket.ticket_id}
 
@@ -1050,10 +1179,34 @@ def mm_duo_cancel(req: TicketReq) -> dict:
 @app.post("/api/ext/mm/bind")
 def mm_bind(req: BindReq) -> dict:
     user = _require_user(req.token)
-    # Harmless to call both: each no-ops if it doesn't own the match.
-    matchmaker.bind_race(req.match_id, user["id"], req.race_id)
-    duo_matchmaker.bind_race(req.match_id, user["id"], req.race_id)
-    return {"ok": True}
+    race = EXT_RACES.get(req.race_id)
+    if race is None:
+        raise HTTPException(404, "Unknown or expired race.")
+    one = matchmaker.get_match(req.match_id, user["id"])
+    duo = duo_matchmaker.get_match(req.match_id, user["id"])
+    match = one or duo
+    if match is None:
+        raise HTTPException(404, "Unknown match or player is not a participant.")
+    if race.start != match["start"] or race.target != match["target"]:
+        raise HTTPException(400, "Race route does not match this match.")
+    if race.bound_match_id is not None and race.bound_match_id != req.match_id:
+        raise HTTPException(409, "Race is already bound to another match.")
+    if race.owner_user_id is not None and race.owner_user_id != user["id"]:
+        raise HTTPException(403, "This race belongs to another player.")
+    if race.bound_match_id is None and (race.started_at is not None or race.path):
+        raise HTTPException(409, "A match race must be bound before it starts.")
+    bound = (matchmaker.bind_race(req.match_id, user["id"], req.race_id)
+             if one is not None else
+             duo_matchmaker.bind_race(req.match_id, user["id"], req.race_id))
+    if not bound:
+        raise HTTPException(409, "Race could not be bound to this player.")
+    practice = matchmaker.practice_context(req.match_id, user["id"])
+    race.owner_user_id = user["id"]
+    race.bound_match_id = req.match_id
+    if practice is not None:
+        race.debug_bot = True
+        race.debug_owner_id = user["id"]
+    return {"ok": True, "debug_bot": practice is not None}
 
 
 @app.get("/api/ext/mm/match/{match_id}")
@@ -1120,7 +1273,7 @@ def _finalize(resolution: dict) -> None:
     RANKED_RESULTS[mid] = {}
     for key in ("a", "b"):
         side = resolution[key]["side"]
-        if side.user_id is None:  # ghost opponent - nothing to persist
+        if side.user_id is None or side.is_bot:
             continue
         RANKED_RESULTS[mid][side.user_id] = _build_result(resolution, key)
 
@@ -1177,16 +1330,17 @@ def _build_result(resolution: dict, key: str, *,
         updated = user
 
     post_rank = rank_for_rp(post_rp)
-    accounts.record_match(
-        user_id=me.user_id, opponent=opp.username,
-        opponent_bot=1 if opp.is_bot else 0, mode=mode,
-        start=resolution["start"], target=resolution["target"], par=par,
-        difficulty=resolution["difficulty"], result=result_word,
-        clicks=me.clicks, time_ms=me.time_ms,
-        opp_clicks=opp.clicks, opp_time_ms=opp.time_ms,
-        rp_delta=rp_delta, rating_before=pre.rating, rating_after=rating_after,
-        rp_before=pre_rp, rp_after=post_rp, flagged=1 if me.flagged else 0,
-    )
+    if mode != "practice":
+        accounts.record_match(
+            user_id=me.user_id, opponent=opp.username,
+            opponent_bot=1 if opp.is_bot else 0, mode=mode,
+            start=resolution["start"], target=resolution["target"], par=par,
+            difficulty=resolution["difficulty"], result=result_word,
+            clicks=me.clicks, time_ms=me.time_ms,
+            opp_clicks=opp.clicks, opp_time_ms=opp.time_ms,
+            rp_delta=rp_delta, rating_before=pre.rating, rating_after=rating_after,
+            rp_before=pre_rp, rp_after=post_rp, flagged=1 if me.flagged else 0,
+        )
 
     # Per-season analytics: tally this competitive result onto the player's
     # current-season stat row. Best-effort - never let stats break the result.
@@ -1374,7 +1528,7 @@ def _route_race_update(race: "ExtRace", *, is_hop: bool) -> None:
     # A live hop is also proof of life: refresh presence so a slow thinker between
     # heartbeats isn't mistaken for a closed tab by the presence sweeper.
     (duo_matchmaker if is_duo else matchmaker).heartbeat(match_id, user_id)
-    if is_hop:
+    if is_hop and (is_duo or not matchmaker.is_practice(match_id)):
         try:
             accounts.append_match_event(
                 match_id, user_id, seq=race.clicks, title=race.current,
@@ -1411,6 +1565,18 @@ def _auto_resolve(match_id: str, user_id: str, race: "ExtRace",
         spectator_hub.publish(match_id, {"type": "resolved", "results": {"complete": True}})
         return
     maker = duo_matchmaker if is_duo else matchmaker
+    if not is_duo:
+        practice = matchmaker.practice_context(match_id, user_id)
+        if practice is not None:
+            bot_race = EXT_RACES.get(practice["bot_race_id"] or "")
+            matchmaker.submit(
+                match_id,
+                practice["bot_user_id"],
+                finished=bool(bot_race and bot_race.finished),
+                clicks=bot_race.clicks if bot_race else 0,
+                time_ms=bot_race.elapsed_ms if bot_race else 0,
+                flagged=bool(bot_race and bot_race.flagged),
+            )
     resolution = maker.submit(
         match_id, user_id, finished=race.finished, clicks=race.clicks,
         time_ms=race.elapsed_ms, flagged=race.flagged,
@@ -1578,6 +1744,7 @@ def lobby_create(req: LobbyCreateReq) -> dict:
     user = _require_user(req.token)
     if user.get("needs_username"):
         raise HTTPException(400, "Pick a username first.")
+    _require_no_active_practice(user["id"])
     lobby = matchmaker.create_lobby(user, req.difficulty or "any")
     return {"ok": True, "code": lobby.code, "difficulty": lobby.difficulty}
 
@@ -1587,6 +1754,7 @@ def lobby_join(req: LobbyJoinReq) -> dict:
     user = _require_user(req.token)
     if user.get("needs_username"):
         raise HTTPException(400, "Pick a username first.")
+    _require_no_active_practice(user["id"])
     try:
         lobby = matchmaker.join_lobby(req.code, user)
     except KeyError as e:
@@ -1757,6 +1925,7 @@ def party_invite(req: PartyInviteReq) -> dict:
     user = _require_user(req.token)
     if user.get("needs_username"):
         raise HTTPException(400, "Pick a username first.")
+    _require_no_active_practice(user["id"])
     kind = req.kind if req.kind in ("duos", "duel") else "duos"
     friend = accounts.get_user(req.friend_id)
     if friend is None:
@@ -1826,6 +1995,7 @@ def party_accept(req: PartyInviteIdReq) -> dict:
         if inviter is None:
             inv["status"] = "expired"
             raise HTTPException(400, "The inviter is no longer available.")
+        _require_no_active_practice(user["id"], inviter["id"])
         if inv.get("kind") == "duel":
             # Casual 1v1: build a private head-to-head for the two friends right
             # here (no queue, no EP) and hand both sides the same match.

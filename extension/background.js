@@ -121,7 +121,7 @@ async function activeTabId(sender) {
   return tab ? tab.id : null;
 }
 
-async function newRace(difficulty, sender, start, target, newTab, matchId) {
+async function newRace(difficulty, sender, start, target, newTab, matchId, deferNavigation) {
   let url = `${BACKEND}/api/ext/new?difficulty=${encodeURIComponent(difficulty || "any")}`;
   if (start && target) {
     url += `&start=${encodeURIComponent(start)}&target=${encodeURIComponent(target)}`;
@@ -135,13 +135,30 @@ async function newRace(difficulty, sender, start, target, newTab, matchId) {
   await setRace(data);
   // From the lobby side panel we open a fresh Wikipedia tab so the panel stays
   // put; from the in-page HUD we navigate the active tab.
-  if (newTab) {
-    chrome.tabs.create({ url: data.start_url });
-  } else {
-    const tabId = await activeTabId(sender);
-    if (tabId != null) chrome.tabs.update(tabId, { url: data.start_url });
+  if (!deferNavigation) {
+    if (newTab) {
+      chrome.tabs.create({ url: data.start_url });
+    } else {
+      const tabId = await activeTabId(sender);
+      if (tabId != null) chrome.tabs.update(tabId, { url: data.start_url });
+    }
   }
   return data;
+}
+
+async function openRace(sender, newTab) {
+  const race = await getRace();
+  if (!race || !race.start_url || !isWikipediaUrl(race.start_url)) {
+    throw new Error("No valid race is ready to open");
+  }
+  if (newTab) {
+    await chrome.tabs.create({ url: race.start_url });
+  } else {
+    const tabId = await activeTabId(sender);
+    if (tabId == null) throw new Error("No active tab");
+    await chrome.tabs.update(tabId, { url: race.start_url });
+  }
+  return race;
 }
 
 async function dailyRace(token, newTab) {
@@ -181,6 +198,19 @@ async function forfeitMatch(matchId) {
   return await res.json();
 }
 
+async function debugBotAction(matchId, action) {
+  const { wr_token } = await chrome.storage.local.get("wr_token");
+  const res = await fetch(`${BACKEND}/api/ext/admin/bot-action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: wr_token || "", match_id: matchId, action }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error((data && data.detail) || `backend ${res.status}`);
+  return data;
+}
+
 async function sendHeartbeat(matchId) {
   // Presence ping from the live race tab so the server can detect a closed/crashed
   // tab and force-forfeit it. Best-effort; never throws. `alive` is false once the
@@ -201,6 +231,7 @@ async function sendHeartbeat(matchId) {
 async function reportVisit(title, links, via, viaFrom, nav) {
   const race = await getRace();
   if (!race || race.finished) return race;
+  const { wr_token } = await chrome.storage.local.get("wr_token");
   const res = await fetch(`${BACKEND}/api/ext/visit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -209,7 +240,7 @@ async function reportVisit(title, links, via, viaFrom, nav) {
     // back/forward. These were being dropped here, which silently broke the whole
     // redirect/anti-cheat path (the server always saw via=None).
     body: JSON.stringify({
-      race_id: race.race_id, title, links: links || [],
+      race_id: race.race_id, title, links: links || [], token: wr_token || null,
       via: via || null, via_from: viaFrom || null, nav: nav || null,
     }),
   });
@@ -254,7 +285,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "newRace") {
-        sendResponse({ ok: true, race: await newRace(msg.difficulty, sender, msg.start, msg.target, msg.newTab, msg.match_id) });
+        sendResponse({ ok: true, race: await newRace(msg.difficulty, sender, msg.start, msg.target, msg.newTab, msg.match_id, msg.deferNavigation) });
+      } else if (msg.type === "openRace") {
+        sendResponse({ ok: true, race: await openRace(sender, msg.newTab) });
       } else if (msg.type === "dailyRace") {
         sendResponse({ ok: true, race: await dailyRace(msg.token, msg.newTab) });
       } else if (msg.type === "weeklyRace") {
@@ -273,6 +306,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, result: await forfeitMatch(msg.match_id) });
       } else if (msg.type === "heartbeat") {
         sendResponse({ ok: true, result: await sendHeartbeat(msg.match_id) });
+      } else if (msg.type === "debugBotAction") {
+        sendResponse({ ok: true, result: await debugBotAction(msg.match_id, msg.action) });
       } else {
         sendResponse({ ok: false, error: "unknown message" });
       }

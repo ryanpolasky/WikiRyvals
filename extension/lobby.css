@@ -152,6 +152,10 @@ button { font: inherit; cursor: pointer; border-radius: 9px; padding: 9px 12px; 
 button:disabled { opacity: .5; cursor: not-allowed; }
 
 .row-actions { display: flex; gap: 8px; margin-bottom: 11px; }
+.bot-lab-launch { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-bottom: 8px; }
+.bot-lab-launch select { margin: 0; min-width: 0; }
+.bot-lab-launch button { width: auto; white-space: nowrap; }
+.admin-card > .btn-secondary { margin-top: 2px; }
 .hint { margin: 6px 2px 0; color: var(--muted); min-height: 16px; font-size: 12px; }
 .hint:empty { min-height: 0; margin: 0; } /* don't reserve bottom space with no message */
 .hint.err { color: var(--orange); }

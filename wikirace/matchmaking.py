@@ -223,6 +223,8 @@ class MatchMaker:
         self._race_index: dict[str, str] = {}
 
     def _save(self, m: Match) -> None:
+        if m.mode == "practice":
+            return
         try:
             self._persist(m.match_id, m.to_dict())
         except Exception:
@@ -305,6 +307,17 @@ class MatchMaker:
     def cancel(self, ticket_id: str) -> None:
         with self._lock:
             self._tickets.pop(ticket_id, None)
+
+    def cancel_waiting(self, user_id: str) -> None:
+        with self._lock:
+            for tid in [tid for tid, ticket in self._tickets.items()
+                        if ticket.user_id == user_id and ticket.status == "searching"]:
+                self._tickets.pop(tid, None)
+            for code in [code for code, lobby in self._lobbies.items()
+                         if lobby.match_id is None and
+                         user_id in {lobby.host.user_id,
+                                     lobby.guest.user_id if lobby.guest else None}]:
+                self._lobbies.pop(code, None)
 
     def _waited(self, t: Ticket) -> float:
         return time.monotonic() - t.enqueued_at
@@ -471,11 +484,77 @@ class MatchMaker:
             self._save(match)
             return match
 
+    def create_bot_match(self, user: dict, difficulty: str) -> Match:
+        with self._lock:
+            self._sweep()
+            for tid in [tid for tid, t in self._tickets.items()
+                        if t.user_id == user["id"] and t.status == "searching"]:
+                self._tickets.pop(tid, None)
+            for mid in [mid for mid, m in self._matches.items()
+                        if m.mode == "practice" and m.a.user_id == user["id"] and not m.resolved]:
+                stale = self._matches.pop(mid)
+                for side in (stale.a, stale.b):
+                    if side.race_id:
+                        self._race_index.pop(side.race_id, None)
+            match_id = uuid_hex()
+            requested = difficulty or "any"
+            resolved = requested if requested != "any" else _band_for_rating(user["rating"])
+            start, target, par = self._prompt(resolved)
+            rating = Rating(user["rating"], user["rd"], user["vol"])
+            match = Match(
+                match_id=match_id,
+                mode="practice",
+                difficulty=resolved,
+                start=start,
+                target=target,
+                par=par,
+                a=Side(user["id"], user["username"] or "admin", rating,
+                       user["rp"], user.get("region") or "Other",
+                       tags=list(user.get("tags") or [])),
+                b=Side(f"debug-bot:{match_id}", "Debug Bot",
+                       Rating(rating.rating, rating.rd, rating.vol), user["rp"],
+                       "LAB", is_bot=True),
+            )
+            self._matches[match_id] = match
+            return match
+
+    def practice_context(self, match_id: str, owner_user_id: str) -> dict | None:
+        with self._lock:
+            m = self._matches.get(match_id)
+            if m is None or m.mode != "practice" or m.a.user_id != owner_user_id or not m.b.is_bot:
+                return None
+            return {
+                "match_id": m.match_id,
+                "resolved": m.resolved,
+                "owner_user_id": m.a.user_id,
+                "bot_user_id": m.b.user_id,
+                "bot_race_id": m.b.race_id,
+                "start": m.start,
+                "target": m.target,
+            }
+
+    def is_practice(self, match_id: str) -> bool:
+        with self._lock:
+            m = self._matches.get(match_id)
+            return bool(m and m.mode == "practice")
+
+    def has_active_practice(self, user_id: str) -> bool:
+        with self._lock:
+            return any(not m.resolved and m.mode == "practice" and
+                       m.side_for(user_id) is not None for m in self._matches.values())
+
+    def has_active_nonpractice_match(self, user_id: str) -> bool:
+        with self._lock:
+            return any(not m.resolved and m.mode != "practice" and
+                       m.side_for(user_id) is not None for m in self._matches.values())
+
     # ---- shared match lifecycle ------------------------------------------
     def get_match(self, match_id: str, user_id: str | None = None) -> dict | None:
         with self._lock:
             m = self._matches.get(match_id)
-            return m.public(user_id) if m else None
+            if m is None or (user_id is not None and m.side_for(user_id) is None):
+                return None
+            return m.public(user_id)
 
     def spectate(self, match_id: str) -> dict | None:
         """Read-only, no-perspective view of a match for spectators/watch-party.
@@ -517,19 +596,25 @@ class MatchMaker:
             side = m.side_for(user_id)
             return side.race_id if side else None
 
-    def bind_race(self, match_id: str, user_id: str, race_id: str) -> None:
+    def bind_race(self, match_id: str, user_id: str, race_id: str) -> bool:
         with self._lock:
             m = self._matches.get(match_id)
-            if not m:
-                return
+            if not m or m.resolved:
+                return False
             side = m.side_for(user_id)
-            if side:
-                now = time.monotonic()
-                side.race_id = race_id
-                side.last_seen = now
-                self._race_index[race_id] = match_id
-                m.last_touch = now
-                self._save(m)
+            bound_match_id = self._race_index.get(race_id)
+            if (side is None or (bound_match_id is not None and bound_match_id != match_id)
+                    or any(s is not side and s.race_id == race_id for s in (m.a, m.b))):
+                return False
+            now = time.monotonic()
+            if side.race_id and side.race_id != race_id:
+                self._race_index.pop(side.race_id, None)
+            side.race_id = race_id
+            side.last_seen = now
+            self._race_index[race_id] = match_id
+            m.last_touch = now
+            self._save(m)
+            return True
 
     def submit(
         self, match_id: str, user_id: str, *,
@@ -558,10 +643,11 @@ class MatchMaker:
 
     def _resolve(self, m: Match) -> dict:
         m.resolved = True
-        try:
-            self._forget(m.match_id)  # it now lives in durable match history
-        except Exception:
-            pass
+        if m.mode != "practice":
+            try:
+                self._forget(m.match_id)  # it now lives in durable match history
+            except Exception:
+                pass
         a, b = m.a, m.b
         a_score = _score(a, b)   # 1 win / .5 draw / 0 loss, from a's perspective
         return {
@@ -629,7 +715,7 @@ class MatchMaker:
                 if m.resolved:
                     continue
                 for side in (m.a, m.b):
-                    if (side.user_id and side.last_seen is not None
+                    if (side.user_id and not side.is_bot and side.last_seen is not None
                             and now - side.last_seen > timeout):
                         out.append((mid, side.user_id))
         return out
@@ -646,10 +732,11 @@ class MatchMaker:
                 for side in (stale.a, stale.b):
                     if side.race_id:
                         self._race_index.pop(side.race_id, None)
-                try:
-                    self._forget(mid)
-                except Exception:
-                    pass
+                if stale.mode != "practice":
+                    try:
+                        self._forget(mid)
+                    except Exception:
+                        pass
         for code in [c for c, x in self._lobbies.items() if now - x.last_touch > LOBBY_TTL]:
             self._lobbies.pop(code, None)
 
