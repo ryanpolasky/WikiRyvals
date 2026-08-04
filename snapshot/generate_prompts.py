@@ -1,10 +1,15 @@
 """Generate difficulty-bucketed race prompts from the snapshot graph.
 
 Samples (start, target) pairs, computes BFS shortest hops over the induced
-snapshot graph, and buckets them into easy/medium/hard. The output feeds the
-prototype's "new race" endpoint.
+snapshot graph, and buckets them by how recognizable the endpoints are (see
+`bucket_difficulty`). The output feeds the prototype's "new race" endpoint.
+
+Requires the fame signal from `snapshot.fetch_fame`: difficulty is keyed on
+notability rather than hop count, and interlanguage-link counts are the only
+measure of that which survives contact with a topically skewed crawl.
 
 Usage:
+    python -m snapshot.fetch_fame
     python -m snapshot.generate_prompts --per-bucket 40
 """
 
@@ -21,7 +26,32 @@ from wikirace.graph import (
     induced_adjacency,
     shortest_hops,
 )
-from wikirace.snapshot_store import GRAPH_PATH, META_PATH, PROMPTS_PATH
+from wikirace.snapshot_store import FAME_PATH, GRAPH_PATH, META_PATH, PROMPTS_PATH
+from wikirace.wiki import _is_article_title
+
+# Endpoints nobody could place. Below this many interlanguage links an article is
+# jargon or a list page ("One liner schedule", "Lists of bodies of water") - a
+# fine thing to pass *through*, a miserable thing to be handed as a destination.
+FAME_FLOOR = 8
+# Corpus percentiles that separate the tiers.
+EASY_PCT, MEDIUM_PCT = 0.75, 0.30
+
+
+def _usable_endpoint(title: str, fame: int) -> bool:
+    """Whether an article can be handed to a player as a start or target.
+
+    List pages clear the fame bar on interlanguage links alone but make dismal
+    endpoints - they're indexes, not places, and "get to Lists of mathematics
+    topics" is a scavenger hunt rather than a race.
+    """
+    if fame < FAME_FLOOR:
+        return False
+    # Snapshots built before the namespace fix still hold "Template talk:" pages;
+    # they currently fall below the fame floor anyway, but excluding them by
+    # coincidence is not the same as excluding them on purpose.
+    if not _is_article_title(title):
+        return False
+    return not (title.startswith("List of ") or title.startswith("Lists of "))
 
 
 def generate(per_bucket: int, max_pairs: int, seed: int, *,
@@ -29,11 +59,24 @@ def generate(per_bucket: int, max_pairs: int, seed: int, *,
              focus_added: bool = False) -> None:
     if not GRAPH_PATH.exists():
         raise SystemExit("No snapshot graph found. Run `python -m snapshot.build_snapshot` first.")
+    if not FAME_PATH.exists():
+        raise SystemExit("No fame data found. Run `python -m snapshot.fetch_fame` first.")
 
     data = json.loads(GRAPH_PATH.read_text(encoding="utf-8"))
     adjacency = induced_adjacency(data["adjacency"])
-    titles = [t for t in data["titles"] if adjacency.get(t)]
+    fame: dict[str, int] = json.loads(
+        FAME_PATH.read_text(encoding="utf-8"))["langlinks"]
+    # Unrecognizable articles stay in the graph (they make fine intermediate
+    # hops) but never become a start or a target.
+    titles = [t for t in data["titles"]
+              if adjacency.get(t) and _usable_endpoint(t, fame.get(t, 0))]
     title_set = set(titles)
+    if len(titles) < 2:
+        raise SystemExit("Fame floor left too few usable articles - is fame.json stale?")
+
+    ranked = sorted(fame.get(t, 0) for t in titles)
+    easy_floor = ranked[int(len(ranked) * EASY_PCT)]
+    medium_floor = ranked[int(len(ranked) * MEDIUM_PCT)]
 
     deg = in_degrees(adjacency)
     median_deg = statistics.median(deg.values()) if deg else 0.0
@@ -84,7 +127,8 @@ def generate(per_bucket: int, max_pairs: int, seed: int, *,
         if hops is None or hops < 2:
             continue
 
-        difficulty = bucket_difficulty(hops, deg.get(target, 0), median_deg)
+        difficulty = bucket_difficulty(hops, fame.get(start, 0), fame.get(target, 0),
+                                       easy_floor, medium_floor)
         if len(buckets[difficulty]) >= per_bucket:
             continue
         buckets[difficulty].append({
@@ -92,6 +136,8 @@ def generate(per_bucket: int, max_pairs: int, seed: int, *,
             "target": target,
             "hops": hops,
             "difficulty": difficulty,
+            "start_fame": fame.get(start, 0),
+            "target_fame": fame.get(target, 0),
         })
 
     new_prompts = [p for bucket in buckets.values() for p in bucket]
@@ -102,6 +148,9 @@ def generate(per_bucket: int, max_pairs: int, seed: int, *,
         counts[p["difficulty"]] = counts.get(p["difficulty"], 0) + 1
     PROMPTS_PATH.write_text(json.dumps({
         "median_in_degree": median_deg,
+        "fame_floor": FAME_FLOOR,
+        "easy_floor": easy_floor,
+        "medium_floor": medium_floor,
         "counts": counts,
         "prompts": all_prompts,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -112,6 +161,9 @@ def generate(per_bucket: int, max_pairs: int, seed: int, *,
     else:
         print(f"Wrote {len(all_prompts)} prompts -> {PROMPTS_PATH}")
     print("  counts: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    print(f"  fame floors: easy>={easy_floor}, medium>={medium_floor}, "
+          f"endpoints need >={FAME_FLOOR} langlinks "
+          f"({len(titles)} of {len(data['titles'])} articles eligible)")
     if focus_list:
         print(f"  new prompts focused on {len(focus_list)} article(s).")
 

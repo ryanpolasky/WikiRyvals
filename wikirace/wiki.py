@@ -88,8 +88,14 @@ def _is_article_title(title: str) -> bool:
     if not title:
         return False
     if ":" in title:
-        prefix = title.split(":", 1)[0].strip().lower()
-        if prefix in _NON_ARTICLE_PREFIXES:
+        # Titles reach here already normalized (underscores -> spaces), so the
+        # two-word namespaces have to be matched in that form too - otherwise
+        # "Template talk:X" sails past a set holding only "template_talk" and
+        # ends up a playable link (and, worse, a race endpoint).
+        prefix = title.split(":", 1)[0].strip().lower().replace(" ", "_")
+        # MediaWiki reserves "<namespace> talk:" for every namespace, so match
+        # the whole family instead of the handful that were listed by hand.
+        if prefix in _NON_ARTICLE_PREFIXES or prefix.endswith("_talk"):
             return False
     if title.lower() == "main page":
         return False

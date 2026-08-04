@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import os
 import random
 import threading
@@ -39,6 +40,15 @@ from .snapshot_store import PROMPTS_PATH, SnapshotStore
 from .wiki import _is_article_title, normalize_title
 
 WIKI_BASE = "https://en.wikipedia.org/wiki/"
+
+# Verbose anti-cheat tracing for solo races (see /api/ext/new?debug=1). Purely an
+# observer: it records the inputs and the reasoning behind every hop verdict but
+# never influences one, so a traced run behaves byte-identically to a normal run
+# and can actually reproduce a false flag.
+ac_log = logging.getLogger("wikiryvals.anticheat")
+# How many hop records one traced race keeps. A race is a few dozen hops at most;
+# the cap only exists so a wedged tab can't grow the dict without bound.
+DEBUG_LOG_LIMIT = 500
 
 app = FastAPI(title="WikiRyvals - Phase 0")
 spectator_hub = MatchHub()
@@ -180,6 +190,10 @@ class ExtRace:
     # that page (latest observation). Used to detect a "missed win".
     links_seen: dict[str, list[str]] = field(default_factory=dict)
     missed_win: dict | None = None
+    # Verbose anti-cheat tracing (admin-only, solo races). `debug_log` holds one
+    # record per reported visit explaining exactly how the verdict was reached.
+    debug: bool = False
+    debug_log: list[dict] = field(default_factory=list)
     debug_bot: bool = False
     debug_owner_id: str | None = None
     owner_user_id: str | None = None
@@ -260,6 +274,7 @@ def _ext_state(race: ExtRace) -> dict:
         "path": race.path,
         "missed_win": race.missed_win,
         "debug_bot": race.debug_bot,
+        "debug": race.debug,
     }
 
 
@@ -301,6 +316,10 @@ class ExtVisitRequest(BaseModel):
     # Timing: "navigate" | "reload" | "back_forward". Browser back/forward is never a
     # legal race move, so we flag it regardless of which links the two pages share.
     nav: str | None = None
+    # Content-script diagnostics, only sent for a traced race. Recorded verbatim
+    # into the debug log and NEVER read by validation - a client must not be able
+    # to talk its way out of a flag.
+    client: dict | None = None
 
 
 @app.post("/api/ext/new")
@@ -308,8 +327,16 @@ def ext_new_race(
     difficulty: str = "any",
     start: str | None = None,
     target: str | None = None,
+    debug: bool = False,
+    token: str | None = None,
+    authorization: str | None = Header(default=None),
 ) -> dict:
     _sweep_races()
+    # Verbose anti-cheat tracing is admin-only: solo runs feed the daily/weekly
+    # boards, and publishing exactly which checks a hop passed or failed is a
+    # recipe for engineering a hop that slips past them.
+    if debug:
+        _require_admin(token, authorization)
     # Custom race: caller supplies both endpoints (also used for deterministic
     # testing). Otherwise pull a difficulty-bucketed prompt from the snapshot.
     if start and target:
@@ -323,6 +350,7 @@ def ext_new_race(
             difficulty="custom",
             optimal_hops=int(hops or 0),
             current=start,
+            debug=debug,
         )
         EXT_RACES[race.race_id] = race
         body = _ext_state(race)
@@ -345,11 +373,106 @@ def ext_new_race(
         difficulty=prompt.get("difficulty", "any"),
         optimal_hops=int(hops or 0),
         current=prompt["start"],
+        debug=debug,
     )
     EXT_RACES[race.race_id] = race
     body = _ext_state(race)
     body["start_url"] = wiki_url(race.start)
     return body
+
+
+def _debug_note(race: ExtRace, kind: str, **fields) -> None:
+    """Record a non-hop visit event. The gaps matter as much as the hops: a visit
+    report that never arrives is what leaves `current` stale and makes the *next*
+    legal click look illegal, so the trace has to show the whole timeline."""
+    if not race.debug:
+        return
+    rec = {"seq": len(race.debug_log) + 1, "at_ms": int(time.monotonic() * 1000),
+           "kind": kind, **fields}
+    race.debug_log.append(rec)
+    del race.debug_log[:-DEBUG_LOG_LIMIT]
+    ac_log.info("[%s] %s %s", race.race_id[:8], kind, fields)
+
+
+def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
+                      prev_page: str, verified: bool, prev_set: set[str],
+                      via: str | None, via_from: str | None,
+                      via_anchor: str, via_prev: set[str], via_ok: bool,
+                      missed_step: bool, is_back_forward: bool,
+                      legal: bool, links: list[str]) -> dict:
+    """Explain one hop verdict in full.
+
+    When a clean run gets flagged the cause is almost always a mismatch between
+    what the player clicked and what the content script managed to report, so the
+    record keeps both sides side by side and then asks the questions that
+    distinguish the usual culprits: a normalization/case drift, a link the DOM
+    scrape never collected, or a stale `current` from a dropped visit report.
+    """
+    def ci(needle: str | None, hay: set[str]) -> list[str]:
+        if not needle:
+            return []
+        low = needle.casefold()
+        return sorted(h for h in hay if h.casefold() == low and h != needle)
+
+    if is_back_forward:
+        reason = "ILLEGAL: browser back/forward is never a legal move"
+    elif not verified:
+        reason = f"ACCEPTED unverified: no link observation recorded for {prev_page!r}"
+    elif title in prev_set:
+        reason = f"ACCEPTED: landing title is a link on {prev_page!r}"
+    elif via_ok:
+        reason = f"ACCEPTED: clicked link {via!r} is a link on {via_anchor!r}"
+    elif missed_step:
+        reason = (f"ACCEPTED: clicked from {via_from!r}, a page we never observed "
+                  f"(dropped visit report - no honest basis to accuse this hop)")
+    else:
+        reason = (f"ILLEGAL: {title!r} is not among the {len(prev_set)} links seen on "
+                  f"{prev_page!r}, and clicked link {via!r} is not among the "
+                  f"{len(via_prev)} links seen on {via_anchor!r}")
+
+    rec: dict = {
+        "seq": len(race.debug_log) + 1,
+        "at_ms": int(time.monotonic() * 1000),
+        "verdict": {"legal": legal, "reason": reason,
+                    "flagged_after": race.flagged},
+        "reported": {
+            "title_raw": req.title, "title": title,
+            "via_raw": req.via, "via": via,
+            "via_from_raw": req.via_from, "via_from": via_from,
+            "nav": req.nav, "links_reported": len(links),
+        },
+        "server_state": {
+            "current_before": prev_page,
+            "path_len": len(race.path),
+            "pages_observed": sorted(race.links_seen),
+        },
+        "checks": {
+            "verified": verified,
+            "prev_link_count": len(prev_set),
+            "title_in_prev": title in prev_set,
+            "via_anchor_page": via_anchor,
+            "via_anchor_link_count": len(via_prev),
+            "via_present": via is not None,
+            "via_ok": via_ok,
+            "missed_step": missed_step,
+            "nav_back_forward": is_back_forward,
+        },
+    }
+    if not legal:
+        # Only worth the scan when something went wrong: these three answers
+        # separate "the scrape missed the link" from "our titles disagree" from
+        # "the server thought you were somewhere else".
+        rec["near_miss"] = {
+            "title_case_variants_in_prev": ci(title, prev_set),
+            "via_case_variants_in_anchor": ci(via, via_prev),
+            "via_found_on_pages": sorted(
+                p for p, ls in race.links_seen.items() if via and via in ls),
+            "title_found_on_pages": sorted(
+                p for p, ls in race.links_seen.items() if title in ls),
+        }
+    if req.client:
+        rec["client"] = req.client
+    return rec
 
 
 @app.post("/api/ext/visit")
@@ -381,11 +504,15 @@ def ext_visit(req: ExtVisitRequest) -> dict:
         race.started_at = time.monotonic()
         race.current = title
         race.path = [title]
+        _debug_note(race, "start", title=title, links_reported=len(links),
+                    nav=req.nav)
         _route_race_update(race, is_hop=False)
         return _ext_state(race)
 
     # Same page (reload / in-page anchor) - no-op.
     if title == race.current:
+        _debug_note(race, "same_page", title=title, nav=req.nav,
+                    links_reported=len(links))
         return _ext_state(race)
 
     # Judge the hop ONLY against what the content script actually saw on the page
@@ -400,6 +527,7 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     seen_prev = race.links_seen.get(race.current)
     verified = seen_prev is not None
     prev_set = set(seen_prev) if verified else set()
+    prev_page = race.current  # captured before the hop overwrites it (debug trace)
     # Validate the *click*, not the landing. Clicking a Wikipedia redirect lands on
     # a different canonical title that isn't in the previous page's link set, which
     # would wrongly flag a clean hop. The content script reports the link the player
@@ -420,12 +548,15 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     # the current page (so `title in prev_set` alone would let it slip through).
     if via_from is None or via_from == race.current:
         via_prev = prev_set
+        via_anchor = race.current
     else:
         via_prev = set(race.links_seen.get(via_from, ()))
+        via_anchor = via_from
     via_ok = via is not None and via in via_prev
     missed_step = (via_from is not None and via_from != race.current
                    and via_from not in race.links_seen)
-    if (req.nav or "").strip().lower() == "back_forward":
+    is_back_forward = (req.nav or "").strip().lower() == "back_forward"
+    if is_back_forward:
         legal = False
     else:
         legal = (not verified) or (title in prev_set) or via_ok or missed_step
@@ -433,6 +564,16 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     race.current = title
     if not legal:
         race.flagged = True
+    if race.debug:
+        rec = _debug_hop_record(
+            race, req, title=title, prev_page=prev_page, verified=verified,
+            prev_set=prev_set, via=via, via_from=via_from, via_anchor=via_anchor,
+            via_prev=via_prev, via_ok=via_ok, missed_step=missed_step,
+            is_back_forward=is_back_forward, legal=legal, links=links)
+        race.debug_log.append(rec)
+        del race.debug_log[:-DEBUG_LOG_LIMIT]
+        ac_log.info("[%s] hop %d %s -> %s | %s", race.race_id[:8], rec["seq"],
+                    prev_page, title, rec["verdict"]["reason"])
     if title == race.target:
         race.finished = True
         race.finished_at = time.monotonic()
@@ -453,6 +594,34 @@ def ext_race_state(race_id: str) -> dict:
     if race is None:
         raise HTTPException(404, "Unknown race.")
     return _ext_state(race)
+
+
+@app.get("/api/ext/race/{race_id}/debug")
+def ext_race_debug(race_id: str, token: str | None = None,
+                   authorization: str | None = Header(default=None)) -> dict:
+    """Dump the verbose anti-cheat trace for a race started with ?debug=1."""
+    _require_admin(token, authorization)
+    race = EXT_RACES.get(race_id)
+    if race is None:
+        raise HTTPException(404, "Unknown or expired race.")
+    if not race.debug:
+        raise HTTPException(400, "This race was not started in debug mode.")
+    illegal = [r for r in race.debug_log
+               if not r.get("verdict", {}).get("legal", True)]
+    return {
+        "ok": True,
+        "race": _ext_state(race),
+        # The whole point of the trace: what got flagged, and on what basis.
+        "summary": {
+            "events": len(race.debug_log),
+            "hops": sum(1 for r in race.debug_log if "verdict" in r),
+            "illegal_hops": len(illegal),
+            "reasons": [r["verdict"]["reason"] for r in illegal],
+            "pages_observed": sorted(race.links_seen),
+            "links_seen_counts": {p: len(ls) for p, ls in race.links_seen.items()},
+        },
+        "events": race.debug_log,
+    }
 
 
 @app.get("/api/ext/health")
@@ -1195,6 +1364,10 @@ def mm_bind(req: BindReq) -> dict:
         raise HTTPException(403, "This race belongs to another player.")
     if race.bound_match_id is None and (race.started_at is not None or race.path):
         raise HTTPException(409, "A match race must be bound before it starts.")
+    # Tracing is a solo diagnostic. Keeping it out of real matches means the
+    # verbose verdict feed can never become a live read on an opponent's run.
+    if race.debug:
+        raise HTTPException(409, "A debug race cannot be used for a match.")
     bound = (matchmaker.bind_race(req.match_id, user["id"], req.race_id)
              if one is not None else
              duo_matchmaker.bind_race(req.match_id, user["id"], req.race_id))

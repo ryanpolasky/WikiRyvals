@@ -61,11 +61,53 @@ function hrefToTitle(href) {
   t = t.replace(/_/g, " ").trim();
   if (!t) return null;
   if (t.includes(":")) {
-    const prefix = t.split(":", 1)[0].trim().toLowerCase();
-    if (RWR_NON_ARTICLE.has(prefix)) return null;
+    // Underscores already became spaces above, so match the two-word namespaces
+    // in that form - and identically to wikirace/wiki.py, since a client/server
+    // disagreement about what is playable shows up as a false flag.
+    const prefix = t.split(":", 1)[0].trim().toLowerCase().replace(/ /g, "_");
+    // "<namespace> talk:" exists for every namespace, so match the family.
+    if (RWR_NON_ARTICLE.has(prefix) || prefix.endsWith("_talk")) return null;
   }
   if (t.toLowerCase() === "main page") return null;
   return t[0].toUpperCase() + t.slice(1);
+}
+
+// --- verbose anti-cheat tracing (admin solo races) -------------------------
+// A clean run gets flagged when the link the player clicked never makes it into
+// the reported link set. Both gates below can do that silently, so in debug mode
+// we record *why* an anchor was excluded rather than just dropping it.
+let debugMode = false;
+
+function anchorReject(a) {
+  if (!a) return "no-anchor";
+  if (!a.closest(".mw-parser-output")) return "outside-.mw-parser-output";
+  const skip = a.closest(RWR_SKIP_SEL);
+  if (skip) {
+    const cls = (skip.className && skip.className.baseVal !== undefined)
+      ? skip.className.baseVal : (skip.className || "");
+    return `in-skipped:${skip.tagName.toLowerCase()}${cls ? "." + String(cls).trim().split(/\s+/).join(".") : ""}`;
+  }
+  if (!hrefToTitle(a.getAttribute("href") || "")) return "not-an-article-link";
+  return null;
+}
+
+// Why the DOM scrape produced the link set it did. If `collected` is far below
+// `anchors`, the skip rules are eating links the player can plainly see and
+// click - which is exactly how a legal hop ends up unverifiable.
+function linkScrapeStats() {
+  const root = document.querySelector(".mw-parser-output");
+  const stats = {
+    parser_output: !!root, anchors: 0, collected: 0,
+    skipped_region: 0, non_article: 0,
+  };
+  if (!root) return stats;
+  root.querySelectorAll("a[href]").forEach((a) => {
+    stats.anchors += 1;
+    if (a.closest(RWR_SKIP_SEL)) { stats.skipped_region += 1; return; }
+    if (!hrefToTitle(a.getAttribute("href") || "")) { stats.non_article += 1; return; }
+    stats.collected += 1;
+  });
+  return stats;
 }
 
 // Read the article's real link set straight from the live DOM, so the backend
@@ -86,16 +128,34 @@ function collectLinks() {
 // One-shot read of the link the player last clicked (set by the capture-phase
 // listener in init). Consumed immediately and freshness-gated so a stale click
 // can never be replayed to launder a later hop.
+let lastViaDiag = null;  // why this hop had no usable `via` (debug only)
+
 function readVia() {
+  lastViaDiag = null;
   try {
     const raw = sessionStorage.getItem("rwr_via");
     sessionStorage.removeItem("rwr_via");
+    // A click the capture listener refused to record (outside the article body,
+    // or inside a skipped region). Those links are still perfectly clickable, so
+    // this is a prime false-flag source and has to show up in the trace.
+    let rejected = null;
+    try {
+      rejected = JSON.parse(sessionStorage.getItem("rwr_via_dbg") || "null");
+      sessionStorage.removeItem("rwr_via_dbg");
+    } catch (_) {}
     if (raw) {
       const v = JSON.parse(raw);
-      if (v && typeof v.to === "string" && Date.now() - (v.at || 0) < 15000) {
+      const age = Date.now() - (v.at || 0);
+      if (v && typeof v.to === "string" && age < 15000) {
+        lastViaDiag = { source: "click", age_ms: age, rejected_click: rejected };
         return { to: v.to, from: v.from || null };
       }
+      // Present but expired: the 15s freshness gate dropped a real click.
+      lastViaDiag = { source: "expired", age_ms: age, dropped_to: v && v.to,
+                      rejected_click: rejected };
+      return { to: null, from: null };
     }
+    lastViaDiag = { source: "none", rejected_click: rejected };
   } catch (_) {}
   return { to: null, from: null };
 }
@@ -854,7 +914,23 @@ async function init() {
   // the next article, where the visit report below reads and consumes it.
   document.addEventListener("click", (ev) => {
     const a = ev.target && ev.target.closest && ev.target.closest("a[href]");
-    if (!a || !a.closest(".mw-parser-output") || a.closest(RWR_SKIP_SEL)) return;
+    const reject = anchorReject(a);
+    if (reject) {
+      // Still a navigation the player made. Leave a breadcrumb so the trace can
+      // say "you clicked X but it was excluded because Y" instead of the hop
+      // just showing up as an unexplained illegal jump.
+      if (debugMode && a) {
+        try {
+          sessionStorage.setItem("rwr_via_dbg", JSON.stringify({
+            from: currentTitle(), reason: reject,
+            href: (a.getAttribute("href") || "").slice(0, 300),
+            title: hrefToTitle(a.getAttribute("href") || ""),
+            at: Date.now(),
+          }));
+        } catch (_) {}
+      }
+      return;
+    }
     const to = hrefToTitle(a.getAttribute("href") || "");
     if (!to) return;
     try {
@@ -905,11 +981,52 @@ async function init() {
     return;
   }
 
+  debugMode = !!race.debug;
+
   const title = currentTitle();
   if (title && !race.finished) {
     const via = readVia();
     const nav = navType();
-    const resp = await send("visit", { title, links: collectLinks(), via: via.to, via_from: via.from, nav });
+    const links = collectLinks();
+    const scrape = debugMode ? linkScrapeStats() : null;
+    const client = debugMode ? {
+      url: location.href.slice(0, 300),
+      title_from_dom: title,
+      ready_state: document.readyState,
+      nav,
+      via_diag: lastViaDiag,
+      scrape,
+      links_sent: links.length,
+    } : null;
+    if (debugMode) {
+      console.group(`%c[WikiRyvals debug] visit -> ${title}`, "color:#7c3aed;font-weight:bold");
+      console.log("client sees:", { url: location.href, nav, ready: document.readyState });
+      console.log("via (clicked link):", via, "diagnostics:", lastViaDiag);
+      if (lastViaDiag && lastViaDiag.rejected_click) {
+        console.warn("CLICK WAS NOT RECORDED as `via`:", lastViaDiag.rejected_click,
+                     "-> this link is clickable but excluded from the reported link set, " +
+                     "which is a false-flag source");
+      }
+      if (lastViaDiag && lastViaDiag.source === "expired") {
+        console.warn("via EXPIRED (>15s between click and load):", lastViaDiag);
+      }
+      console.log("DOM link scrape:", scrape);
+      console.log("links reported to server:", links.length, links.slice(0, 40));
+      console.groupEnd();
+    }
+    const resp = await send("visit", { title, links, via: via.to, via_from: via.from, nav, client });
+    if (debugMode) {
+      const r = resp && resp.race;
+      console.group(`%c[WikiRyvals debug] server verdict for ${title}`,
+                    "color:" + (r && r.flagged ? "#dc2626" : "#16a34a") + ";font-weight:bold");
+      console.log("legal:", r && r.legal, "| verified:", r && r.verified,
+                  "| flagged:", r && r.flagged);
+      console.log("server path:", r && r.path);
+      console.log("full race state:", r);
+      console.log("full trace: GET /api/ext/race/" + (race.race_id || "?") +
+                  "/debug?token=<admin token>");
+      console.groupEnd();
+    }
     updateHud(resp.ok ? resp.race : race, true);
     if (resp.ok && resp.race && resp.race.path && resp.race.path.length >= 2) {
       const last = resp.race.path[resp.race.path.length - 1];

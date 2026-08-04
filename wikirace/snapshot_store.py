@@ -24,6 +24,7 @@ SNAPSHOT_DIR = DATA_DIR / "snapshot"
 PAGES_DIR = SNAPSHOT_DIR / "pages"
 GRAPH_PATH = SNAPSHOT_DIR / "graph.json"
 META_PATH = SNAPSHOT_DIR / "meta.json"
+FAME_PATH = SNAPSHOT_DIR / "fame.json"
 PROMPTS_PATH = DATA_DIR / "prompts.json"
 RUNTIME_CACHE_DIR = DATA_DIR / "runtime_cache"
 

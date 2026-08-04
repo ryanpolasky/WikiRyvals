@@ -359,6 +359,17 @@
             <button class="btn-primary" id="start-bot-match">Launch Bot Lab</button>
           </div>
           <p class="hint" id="bot-lab-hint"></p>
+          <p>Start a solo race with verbose anti-cheat tracing. Every hop logs its full verdict to the page console, so a false flag can be traced to the exact check that failed.</p>
+          <div class="bot-lab-launch">
+            <select id="debug-race-difficulty" aria-label="Debug race difficulty">
+              <option value="any">Adaptive route</option>
+              <option value="easy">Easy route</option>
+              <option value="medium">Medium route</option>
+              <option value="hard">Hard route</option>
+            </select>
+            <button class="btn-secondary" id="start-debug-race">Start traced race</button>
+          </div>
+          <p class="hint" id="debug-race-hint"></p>
           <button class="btn-secondary" id="open-admin">Manage accounts &amp; tags</button>
         </div>
       </section>

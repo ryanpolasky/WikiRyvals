@@ -121,10 +121,16 @@ async function activeTabId(sender) {
   return tab ? tab.id : null;
 }
 
-async function newRace(difficulty, sender, start, target, newTab, matchId, deferNavigation) {
+async function newRace(difficulty, sender, start, target, newTab, matchId, deferNavigation, debug) {
   let url = `${BACKEND}/api/ext/new?difficulty=${encodeURIComponent(difficulty || "any")}`;
   if (start && target) {
     url += `&start=${encodeURIComponent(start)}&target=${encodeURIComponent(target)}`;
+  }
+  // Verbose anti-cheat tracing is admin-gated server-side, so the token has to
+  // ride along or the request is rejected outright.
+  if (debug) {
+    const { wr_token } = await chrome.storage.local.get("wr_token");
+    url += `&debug=1&token=${encodeURIComponent(wr_token || "")}`;
   }
   const res = await fetch(url, { method: "POST" });
   if (!res.ok) throw new Error(`backend ${res.status}`);
@@ -228,7 +234,7 @@ async function sendHeartbeat(matchId) {
   }
 }
 
-async function reportVisit(title, links, via, viaFrom, nav) {
+async function reportVisit(title, links, via, viaFrom, nav, client) {
   const race = await getRace();
   if (!race || race.finished) return race;
   const { wr_token } = await chrome.storage.local.get("wr_token");
@@ -242,6 +248,8 @@ async function reportVisit(title, links, via, viaFrom, nav) {
     body: JSON.stringify({
       race_id: race.race_id, title, links: links || [], token: wr_token || null,
       via: via || null, via_from: viaFrom || null, nav: nav || null,
+      // Only populated for a traced race; recorded, never trusted.
+      client: client || null,
     }),
   });
   if (!res.ok) return race;
@@ -285,7 +293,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "newRace") {
-        sendResponse({ ok: true, race: await newRace(msg.difficulty, sender, msg.start, msg.target, msg.newTab, msg.match_id, msg.deferNavigation) });
+        sendResponse({ ok: true, race: await newRace(msg.difficulty, sender, msg.start, msg.target, msg.newTab, msg.match_id, msg.deferNavigation, msg.debug) });
       } else if (msg.type === "openRace") {
         sendResponse({ ok: true, race: await openRace(sender, msg.newTab) });
       } else if (msg.type === "dailyRace") {
@@ -293,7 +301,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "weeklyRace") {
         sendResponse({ ok: true, race: await weeklyRace(msg.token, msg.newTab) });
       } else if (msg.type === "visit") {
-        sendResponse({ ok: true, race: await reportVisit(msg.title, msg.links, msg.via, msg.via_from, msg.nav) });
+        sendResponse({ ok: true, race: await reportVisit(msg.title, msg.links, msg.via, msg.via_from, msg.nav, msg.client) });
       } else if (msg.type === "getRace") {
         sendResponse({ ok: true, race: await getRace() });
       } else if (msg.type === "clearRace") {

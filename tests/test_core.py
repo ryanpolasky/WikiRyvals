@@ -48,6 +48,21 @@ def test_normalize_title():
     assert normalize_title("napoleon") == "Napoleon"
 
 
+def test_two_word_namespaces_are_never_playable_links():
+    """normalize_title turns "_" into " " before the namespace check, so the
+    two-word prefixes had to be matched in that form - until this was fixed,
+    "Template talk:" pages were playable and even became race endpoints."""
+    html, links = sanitize(
+        '<p><a href="./Template_talk:Performing_arts">tt</a>'
+        '<a href="./User_talk:Someone">ut</a>'
+        '<a href="./Category_talk:Physics">ct</a>'
+        '<a href="./Physics">ok</a></p>'
+    )
+    assert links == ["Physics"]
+    assert "Template talk" not in html
+    assert "User talk" not in html
+
+
 def test_sanitize_extracts_only_article_links():
     html, links = sanitize(SAMPLE_HTML)
     assert links == ["World War II", "France", "Soviet Union"]
@@ -108,14 +123,37 @@ def test_induced_adjacency_drops_dangling_edges():
     assert induced == {"A": ["B"], "B": ["A"]}
 
 
-def test_in_degrees_and_difficulty():
+def test_in_degrees():
     adj = {"A": ["B", "C"], "B": ["C"], "C": []}
-    deg = in_degrees(adj)
-    assert deg == {"A": 0, "B": 1, "C": 2}
-    # 2-hop to a well-connected target is easy; to an obscure target is hard.
-    assert bucket_difficulty(2, target_in_degree=10, median_in_degree=2) == "easy"
-    assert bucket_difficulty(2, target_in_degree=0, median_in_degree=2) == "hard"
-    assert bucket_difficulty(4, target_in_degree=10, median_in_degree=2) == "hard"
+    assert in_degrees(adj) == {"A": 0, "B": 1, "C": 2}
+
+
+def _bucket(hops, start_fame, target_fame):
+    return bucket_difficulty(hops, start_fame, target_fame,
+                             easy_floor=100, medium_floor=40)
+
+
+def test_difficulty_follows_recognizability_not_distance():
+    # Two household names stay easy however far apart they are - you can reason
+    # your way across. This is the case the old hop-count model got backwards.
+    assert _bucket(2, 200, 200) == "easy"
+    assert _bucket(5, 200, 200) == "easy"
+    # Two obscure articles are hard even when they're neighbours.
+    assert _bucket(2, 10, 10) == "hard"
+
+
+def test_difficulty_is_set_by_the_weaker_endpoint():
+    # A famous target does not rescue an unfamiliar start (or vice versa); the
+    # old model never looked at the start at all.
+    assert _bucket(2, 5, 500) == "hard"
+    assert _bucket(2, 500, 5) == "hard"
+    assert _bucket(2, 50, 500) == "medium"
+
+
+def test_long_routes_only_promote_when_familiarity_runs_out():
+    assert _bucket(4, 50, 50) == "medium"
+    assert _bucket(5, 50, 50) == "hard"   # long AND unfamiliar
+    assert _bucket(5, 500, 500) == "easy"  # long but recognizable
 
 
 def test_play_graph_latest_observation_wins(tmp_path):
