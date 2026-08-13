@@ -1385,13 +1385,14 @@ function hint(msg, kind) {
   h.textContent = msg || "";
   h.className = "hint" + (kind ? " " + kind : "");
 }
-function startSolo(opts) {
+async function startSolo(opts) {
   // Kick off the race in a new tab, then collapse the panel so the player focuses
-  // on the article. We fire-and-close instead of awaiting: opening the race tab
-  // reloads this panel mid-await anyway, so closing up front is the clean hand-off.
+  // on the article. Await the response before closing: closing first can tear the
+  // panel down before the message reaches the service worker, so no race starts.
   // The result shows in-page (content.js), so the panel isn't needed during a solo run.
-  bg("newRace", Object.assign({ newTab: true }, opts));
-  window.close();
+  const r = await bg("newRace", Object.assign({ newTab: true }, opts));
+  if (r && r.ok) window.close();
+  else hint((r && r.error) || "Couldn't start the race.", "err");
 }
 $("qm-go").addEventListener("click", () => startSolo({ difficulty: $("qm-diff").value }));
 $("daily-go").addEventListener("click", startDaily);
@@ -1445,11 +1446,12 @@ async function refreshDaily() {
   }
 }
 
-function startDaily() {
+async function startDaily() {
   if (!ME) { showScreenAuth(); return; }
-  // Fire-and-close so the sidebar collapses cleanly onto the race tab (see startSolo).
-  bg("dailyRace", { token: TOKEN, newTab: true });
-  window.close();
+  // Close only once the race actually started (see startSolo).
+  const r = await bg("dailyRace", { token: TOKEN, newTab: true });
+  if (r && r.ok) window.close();
+  else hint((r && r.error) || "Couldn't start today's daily.", "err");
 }
 
 async function toggleDailyBoard() {
@@ -1498,11 +1500,12 @@ async function refreshWeekly() {
   }
 }
 
-function startWeekly() {
+async function startWeekly() {
   if (!ME) { showScreenAuth(); return; }
-  // Fire-and-close so the sidebar collapses cleanly onto the race tab (see startSolo).
-  bg("weeklyRace", { token: TOKEN, newTab: true });
-  window.close();
+  // Close only once the race actually started (see startSolo).
+  const r = await bg("weeklyRace", { token: TOKEN, newTab: true });
+  if (r && r.ok) window.close();
+  else hint((r && r.error) || "Couldn't start this week's puzzle.", "err");
 }
 
 async function toggleWeeklyBoard() {

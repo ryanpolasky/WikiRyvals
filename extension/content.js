@@ -80,7 +80,7 @@ let debugMode = false;
 
 function anchorReject(a) {
   if (!a) return "no-anchor";
-  if (!a.closest(".mw-parser-output")) return "outside-.mw-parser-output";
+  if (!a.closest("#mw-content-text .mw-parser-output")) return "outside-.mw-parser-output";
   const skip = a.closest(RWR_SKIP_SEL);
   if (skip) {
     const cls = (skip.className && skip.className.baseVal !== undefined)
@@ -95,7 +95,7 @@ function anchorReject(a) {
 // `anchors`, the skip rules are eating links the player can plainly see and
 // click - which is exactly how a legal hop ends up unverifiable.
 function linkScrapeStats() {
-  const root = document.querySelector(".mw-parser-output");
+  const root = articleRoot();
   const stats = {
     parser_output: !!root, anchors: 0, collected: 0,
     skipped_region: 0, non_article: 0,
@@ -112,8 +112,16 @@ function linkScrapeStats() {
 
 // Read the article's real link set straight from the live DOM, so the backend
 // can build its graph + spot "missed win" pages without ever calling Wikipedia.
+// The article body wrapper. Must be scoped under #mw-content-text: protected
+// articles put the padlock indicator's own tiny .mw-parser-output first in the
+// DOM, and scraping that instead of the article reports a 1-link page.
+function articleRoot() {
+  return document.querySelector("#mw-content-text .mw-parser-output") ||
+         document.querySelector(".mw-parser-output");
+}
+
 function collectLinks() {
-  const root = document.querySelector(".mw-parser-output");
+  const root = articleRoot();
   if (!root) return [];
   const out = [];
   const seen = new Set();
