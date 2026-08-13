@@ -265,17 +265,23 @@ $("start-bot-match").addEventListener("click", async () => {
   }
 });
 
-$("start-debug-race").addEventListener("click", () => {
+$("start-debug-race").addEventListener("click", async () => {
   const status = $("debug-race-hint");
   status.className = "hint ok";
   status.textContent = "Opening traced race - check the page console (F12).";
   // Same solo path as a normal race, only with tracing on, so the run we inspect
-  // behaves exactly like the run that misbehaved.
-  bg("newRace", {
+  // behaves exactly like the run that misbehaved. Await the response before
+  // closing: tearing the panel down first can cancel the in-flight message.
+  const r = await bg("newRace", {
     newTab: true, debug: true,
     difficulty: $("debug-race-difficulty").value,
   });
-  window.close();
+  if (r && r.ok) {
+    window.close();
+  } else {
+    status.className = "hint err";
+    status.textContent = (r && r.error) || "Could not start the traced race.";
+  }
 });
 
 // ================================================================ AUTH

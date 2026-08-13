@@ -125,6 +125,36 @@ function collectLinks() {
   return out;
 }
 
+// document_idle can fire while a long article is still parsing (readyState
+// "interactive" with only a handful of anchors in the DOM), and a link set
+// scraped that early under-reports the page - the server then judges the next
+// hop against a near-empty observation, which both false-flags legal clicks and
+// leaves pages "unverified" (letting real cheats through). So the visit report
+// waits for the document to finish loading, with a backstop so a hung
+// subresource can't stall the race.
+function whenDocComplete(maxWaitMs) {
+  return new Promise((resolve) => {
+    if (document.readyState === "complete") return resolve();
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    window.addEventListener("load", finish, { once: true });
+    setTimeout(finish, maxWaitMs || 4000);
+  });
+}
+
+// Links rendered after the first scrape (late parses, lazy sections) get topped
+// up with a links-only re-report: the server treats a same-page visit as a
+// no-op hop but still records the fuller observation.
+let lastLinksSent = 0;
+async function topUpLinks(title) {
+  if (!raceActive || currentTitle() !== title) return;
+  const links = collectLinks();
+  if (links.length > lastLinksSent) {
+    lastLinksSent = links.length;
+    await send("visit", { title, links });
+  }
+}
+
 // One-shot read of the link the player last clicked (set by the capture-phase
 // listener in init). Consumed immediately and freshness-gated so a stale click
 // can never be replayed to launder a later hop.
@@ -987,7 +1017,9 @@ async function init() {
   if (title && !race.finished) {
     const via = readVia();
     const nav = navType();
+    await whenDocComplete();
     const links = collectLinks();
+    lastLinksSent = links.length;
     const scrape = debugMode ? linkScrapeStats() : null;
     const client = debugMode ? {
       url: location.href.slice(0, 300),
@@ -1028,6 +1060,10 @@ async function init() {
       console.groupEnd();
     }
     updateHud(resp.ok ? resp.race : race, true);
+    // The page can keep growing after `load`; re-report so the observation the
+    // next hop is judged against reflects everything the player can click.
+    setTimeout(() => topUpLinks(title), 1500);
+    setTimeout(() => topUpLinks(title), 5000);
     if (resp.ok && resp.race && resp.race.path && resp.race.path.length >= 2) {
       const last = resp.race.path[resp.race.path.length - 1];
       if (resp.race.flagged && last === title && resp.race.legal === false) {
