@@ -827,11 +827,22 @@ async function startRaceDirect(mode, start, target, matchId, deferNavigation) {
   // Navigate the active Wikipedia tab (the one this panel is docked to) so the panel
   // stays open for the racing screen; fall back to a new tab only if we can't.
   if (!deferNavigation) {
+    // Bind the race to the tab it runs in (mirrors background.js): other
+    // Wikipedia tabs must not be able to report visits into it.
     try {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab && tab.id != null) await chrome.tabs.update(tab.id, { url: data.start_url });
-      else await chrome.tabs.create({ url: data.start_url });
-    } catch (_) { await chrome.tabs.create({ url: data.start_url }); }
+      if (tab && tab.id != null) {
+        await chrome.tabs.update(tab.id, { url: data.start_url });
+        data.tab_id = tab.id;
+      } else {
+        const created = await chrome.tabs.create({ url: data.start_url });
+        if (created && created.id != null) data.tab_id = created.id;
+      }
+    } catch (_) {
+      const created = await chrome.tabs.create({ url: data.start_url });
+      if (created && created.id != null) data.tab_id = created.id;
+    }
+    if (data.tab_id != null) await chrome.storage.local.set({ race: data });
   }
   return data;
 }
