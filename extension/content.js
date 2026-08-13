@@ -4,12 +4,27 @@
 // the backend (which validates the hop), renders the race HUD, and applies the
 // in-page anti-cheat (kill Ctrl+F + the search box during a race).
 
-function currentTitle() {
-  const m = location.pathname.match(/^\/wiki\/(.+)$/);
+function titleFromWikiPath(pathname) {
+  const m = (pathname || "").match(/^\/wiki\/(.+)$/);
   if (!m) return null;
   let t = decodeURIComponent(m[1].split("#")[0]);
   t = t.replace(/_/g, " ").trim();
   return t ? t[0].toUpperCase() + t.slice(1) : null;
+}
+
+function currentTitle() {
+  // Prefer the canonical title: landing on a redirect keeps the clicked title
+  // in the address bar (/wiki/Digital_computer renders Computer), so the URL
+  // alone misreports the page - e.g. the race never finishes on a redirect
+  // that resolves to the target.
+  try {
+    const canon = document.querySelector('link[rel="canonical"]');
+    if (canon && canon.href) {
+      const t = titleFromWikiPath(new URL(canon.href).pathname);
+      if (t) return t;
+    }
+  } catch (_) {}
+  return titleFromWikiPath(location.pathname);
 }
 
 // How this page was reached (Performance Navigation Timing): "navigate" | "reload"
@@ -926,6 +941,14 @@ function updateHud(race, reveal) {
 }
 
 async function init() {
+  // Chrome may prerender a linked article before the player actually navigates
+  // to it. A visit report from a prerendered document is silently dropped (the
+  // extension messaging isn't available there), losing the hop - and the
+  // recovery reload then looks like a click-less jump. Wait for activation.
+  if (document.prerendering) {
+    await new Promise((resolve) =>
+      document.addEventListener("prerenderingchange", resolve, { once: true }));
+  }
   // Mark the page so our CSS can hide Wikipedia's fundraising/donation banners
   // (works even for the CentralNotice banners injected asynchronously).
   document.documentElement.classList.add("rwr-on");

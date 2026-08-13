@@ -173,6 +173,16 @@ def test_url_bar_jump_to_a_linked_article_is_flagged(race_env):
     assert state["flagged"] is True
 
 
+def test_reload_after_a_dropped_visit_is_not_flagged(race_env):
+    # The real hop's visit report was lost (e.g. prerender); the player's F5
+    # re-reports the landing with nav=reload and no via. Recovery, not a move.
+    race = _new_race("A", "C")
+    _visit(race, "A", links=["B"])
+    state = _hop(race, "B", links=["C"], nav="reload")
+    assert state["legal"] is True
+    assert state["flagged"] is False
+
+
 def test_back_forward_is_flagged_even_when_the_destination_is_linked(race_env):
     race = _new_race("A", "D")
     _visit(race, "A", links=["B"])

@@ -401,7 +401,7 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
                       via: str | None, via_from: str | None,
                       via_anchor: str, via_prev: set[str], via_ok: bool,
                       missed_step: bool, is_back_forward: bool,
-                      legal: bool, links: list[str]) -> dict:
+                      is_reload: bool, legal: bool, links: list[str]) -> dict:
     """Explain one hop verdict in full.
 
     When a clean run gets flagged the cause is almost always a mismatch between
@@ -427,6 +427,9 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
     elif missed_step:
         reason = (f"ACCEPTED: clicked from {via_from!r}, a page we never observed "
                   f"(dropped visit report - no honest basis to accuse this hop)")
+    elif is_reload:
+        reason = ("ACCEPTED: reload landing on a new page - the real hop's visit "
+                  "report was lost, refresh is the recovery, not the move")
     elif via is None and title in prev_set:
         reason = (f"ILLEGAL: {title!r} is a link on {prev_page!r} but no click was "
                   "reported (URL bar / search jump to a linked article)")
@@ -461,6 +464,7 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
             "via_ok": via_ok,
             "missed_step": missed_step,
             "nav_back_forward": is_back_forward,
+            "nav_reload": is_reload,
         },
     }
     if not legal:
@@ -672,6 +676,11 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     missed_step = (via_from is not None and via_from != race.current
                    and via_from not in race.links_seen)
     is_back_forward = (req.nav or "").strip().lower() == "back_forward"
+    # A reload that lands on a *different* page than the server's current one
+    # means the real hop's visit report never arrived (e.g. Chrome prerender
+    # swallowed it) and the player refreshed to recover. The reload carries no
+    # `via`, so without leniency a legitimately played run gets flagged.
+    is_reload = (req.nav or "").strip().lower() == "reload"
     # A hop is only legal with evidence of an actual click (`via`): the URL bar
     # and search box set no `via`, so even a jump whose destination happens to
     # be linked from the current page gets flagged - matching the back/forward
@@ -680,7 +689,7 @@ def ext_visit(req: ExtVisitRequest) -> dict:
         legal = False
     else:
         legal = (not verified) or (via is not None and title in prev_set) \
-            or via_ok or missed_step
+            or via_ok or missed_step or is_reload
     # Competitive races can't take the client's word for it: cross-check every
     # accepted hop against live Wikipedia, so forged /visit payloads (fake
     # `links`, fake `via`, or withheld observations) can't launder a jump.
@@ -697,7 +706,8 @@ def ext_visit(req: ExtVisitRequest) -> dict:
             race, req, title=title, prev_page=prev_page, verified=verified,
             prev_set=prev_set, via=via, via_from=via_from, via_anchor=via_anchor,
             via_prev=via_prev, via_ok=via_ok, missed_step=missed_step,
-            is_back_forward=is_back_forward, legal=legal, links=links)
+            is_back_forward=is_back_forward, is_reload=is_reload,
+            legal=legal, links=links)
         race.debug_log.append(rec)
         del race.debug_log[:-DEBUG_LOG_LIMIT]
         ac_log.info("[%s] hop %d %s -> %s | %s", race.race_id[:8], rec["seq"],
