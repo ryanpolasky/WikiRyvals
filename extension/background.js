@@ -140,13 +140,20 @@ async function newRace(difficulty, sender, start, target, newTab, matchId, defer
   if (matchId) data.match_id = matchId;
   await setRace(data);
   // From the lobby side panel we open a fresh Wikipedia tab so the panel stays
-  // put; from the in-page HUD we navigate the active tab.
+  // put; from the in-page HUD we navigate the active tab. The race is bound to
+  // that tab (tab_id) so another Wikipedia tab the player has open can't report
+  // visits into it - stray tabs used to pollute the path and false-flag the run.
   if (!deferNavigation) {
     if (newTab) {
-      chrome.tabs.create({ url: data.start_url });
+      const tab = await chrome.tabs.create({ url: data.start_url });
+      if (tab && tab.id != null) { data.tab_id = tab.id; await setRace(data); }
     } else {
       const tabId = await activeTabId(sender);
-      if (tabId != null) chrome.tabs.update(tabId, { url: data.start_url });
+      if (tabId != null) {
+        chrome.tabs.update(tabId, { url: data.start_url });
+        data.tab_id = tabId;
+        await setRace(data);
+      }
     }
   }
   return data;
@@ -158,12 +165,15 @@ async function openRace(sender, newTab) {
     throw new Error("No valid race is ready to open");
   }
   if (newTab) {
-    await chrome.tabs.create({ url: race.start_url });
+    const tab = await chrome.tabs.create({ url: race.start_url });
+    if (tab && tab.id != null) race.tab_id = tab.id;
   } else {
     const tabId = await activeTabId(sender);
     if (tabId == null) throw new Error("No active tab");
     await chrome.tabs.update(tabId, { url: race.start_url });
+    race.tab_id = tabId;
   }
+  await setRace(race);
   return race;
 }
 
@@ -175,7 +185,10 @@ async function dailyRace(token, newTab) {
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const data = await res.json();
   await setRace(data);
-  if (newTab) chrome.tabs.create({ url: data.start_url });
+  if (newTab) {
+    const tab = await chrome.tabs.create({ url: data.start_url });
+    if (tab && tab.id != null) { data.tab_id = tab.id; await setRace(data); }
+  }
   return data;
 }
 
@@ -187,7 +200,10 @@ async function weeklyRace(token, newTab) {
   if (!res.ok) throw new Error(`backend ${res.status}`);
   const data = await res.json();
   await setRace(data);
-  if (newTab) chrome.tabs.create({ url: data.start_url });
+  if (newTab) {
+    const tab = await chrome.tabs.create({ url: data.start_url });
+    if (tab && tab.id != null) { data.tab_id = tab.id; await setRace(data); }
+  }
   return data;
 }
 
@@ -234,9 +250,27 @@ async function sendHeartbeat(matchId) {
   }
 }
 
-async function reportVisit(title, links, via, viaFrom, nav, client) {
+// The race belongs to exactly one tab. A visit from any other tab is ignored
+// (and that tab's HUD stays idle): a second Wikipedia tab the player is reading
+// must not append hops to - or flag - a run it isn't part of. Races launched
+// outside the tab-creating paths (e.g. the lobby's direct fallback) have no
+// tab_id yet, so the first tab to report a visit claims the race.
+function senderTabId(sender) {
+  return sender && sender.tab && sender.tab.id != null ? sender.tab.id : null;
+}
+
+async function reportVisit(sender, title, links, via, viaFrom, nav, client) {
   const race = await getRace();
   if (!race || race.finished) return race;
+  const tabId = senderTabId(sender);
+  if (tabId != null) {
+    if (race.tab_id == null) {
+      race.tab_id = tabId;
+      await setRace(race);
+    } else if (race.tab_id !== tabId) {
+      return null; // not the race tab - ignore entirely
+    }
+  }
   const { wr_token } = await chrome.storage.local.get("wr_token");
   const res = await fetch(`${BACKEND}/api/ext/visit`, {
     method: "POST",
@@ -259,6 +293,7 @@ async function reportVisit(title, links, via, viaFrom, nav, client) {
   // knowing this is a ranked/duo match instead of reverting to a solo "End race").
   data.start_url = race.start_url;
   if (race.match_id) data.match_id = race.match_id;
+  if (race.tab_id != null) data.tab_id = race.tab_id;
   await setRace(data);
   return data;
 }
@@ -301,9 +336,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "weeklyRace") {
         sendResponse({ ok: true, race: await weeklyRace(msg.token, msg.newTab) });
       } else if (msg.type === "visit") {
-        sendResponse({ ok: true, race: await reportVisit(msg.title, msg.links, msg.via, msg.via_from, msg.nav, msg.client) });
+        sendResponse({ ok: true, race: await reportVisit(sender, msg.title, msg.links, msg.via, msg.via_from, msg.nav, msg.client) });
       } else if (msg.type === "getRace") {
-        sendResponse({ ok: true, race: await getRace() });
+        // A content script only sees the race if it's in the race's own tab, so
+        // stray Wikipedia tabs never render the HUD or report visits. The lobby
+        // and other extension pages (no sender.tab) always get the full state.
+        const race = await getRace();
+        const tabId = senderTabId(sender);
+        const mine = !(race && tabId != null && race.tab_id != null && race.tab_id !== tabId);
+        sendResponse({ ok: true, race: mine ? race : null });
       } else if (msg.type === "clearRace") {
         await clearRace();
         sendResponse({ ok: true });

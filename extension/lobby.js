@@ -265,17 +265,23 @@ $("start-bot-match").addEventListener("click", async () => {
   }
 });
 
-$("start-debug-race").addEventListener("click", () => {
+$("start-debug-race").addEventListener("click", async () => {
   const status = $("debug-race-hint");
   status.className = "hint ok";
   status.textContent = "Opening traced race - check the page console (F12).";
   // Same solo path as a normal race, only with tracing on, so the run we inspect
-  // behaves exactly like the run that misbehaved.
-  bg("newRace", {
+  // behaves exactly like the run that misbehaved. Await the response before
+  // closing: tearing the panel down first can cancel the in-flight message.
+  const r = await bg("newRace", {
     newTab: true, debug: true,
     difficulty: $("debug-race-difficulty").value,
   });
-  window.close();
+  if (r && r.ok) {
+    window.close();
+  } else {
+    status.className = "hint err";
+    status.textContent = (r && r.error) || "Could not start the traced race.";
+  }
 });
 
 // ================================================================ AUTH
@@ -821,11 +827,22 @@ async function startRaceDirect(mode, start, target, matchId, deferNavigation) {
   // Navigate the active Wikipedia tab (the one this panel is docked to) so the panel
   // stays open for the racing screen; fall back to a new tab only if we can't.
   if (!deferNavigation) {
+    // Bind the race to the tab it runs in (mirrors background.js): other
+    // Wikipedia tabs must not be able to report visits into it.
     try {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab && tab.id != null) await chrome.tabs.update(tab.id, { url: data.start_url });
-      else await chrome.tabs.create({ url: data.start_url });
-    } catch (_) { await chrome.tabs.create({ url: data.start_url }); }
+      if (tab && tab.id != null) {
+        await chrome.tabs.update(tab.id, { url: data.start_url });
+        data.tab_id = tab.id;
+      } else {
+        const created = await chrome.tabs.create({ url: data.start_url });
+        if (created && created.id != null) data.tab_id = created.id;
+      }
+    } catch (_) {
+      const created = await chrome.tabs.create({ url: data.start_url });
+      if (created && created.id != null) data.tab_id = created.id;
+    }
+    if (data.tab_id != null) await chrome.storage.local.set({ race: data });
   }
   return data;
 }
@@ -1379,13 +1396,14 @@ function hint(msg, kind) {
   h.textContent = msg || "";
   h.className = "hint" + (kind ? " " + kind : "");
 }
-function startSolo(opts) {
+async function startSolo(opts) {
   // Kick off the race in a new tab, then collapse the panel so the player focuses
-  // on the article. We fire-and-close instead of awaiting: opening the race tab
-  // reloads this panel mid-await anyway, so closing up front is the clean hand-off.
+  // on the article. Await the response before closing: closing first can tear the
+  // panel down before the message reaches the service worker, so no race starts.
   // The result shows in-page (content.js), so the panel isn't needed during a solo run.
-  bg("newRace", Object.assign({ newTab: true }, opts));
-  window.close();
+  const r = await bg("newRace", Object.assign({ newTab: true }, opts));
+  if (r && r.ok) window.close();
+  else hint((r && r.error) || "Couldn't start the race.", "err");
 }
 $("qm-go").addEventListener("click", () => startSolo({ difficulty: $("qm-diff").value }));
 $("daily-go").addEventListener("click", startDaily);
@@ -1439,11 +1457,12 @@ async function refreshDaily() {
   }
 }
 
-function startDaily() {
+async function startDaily() {
   if (!ME) { showScreenAuth(); return; }
-  // Fire-and-close so the sidebar collapses cleanly onto the race tab (see startSolo).
-  bg("dailyRace", { token: TOKEN, newTab: true });
-  window.close();
+  // Close only once the race actually started (see startSolo).
+  const r = await bg("dailyRace", { token: TOKEN, newTab: true });
+  if (r && r.ok) window.close();
+  else hint((r && r.error) || "Couldn't start today's daily.", "err");
 }
 
 async function toggleDailyBoard() {
@@ -1492,11 +1511,12 @@ async function refreshWeekly() {
   }
 }
 
-function startWeekly() {
+async function startWeekly() {
   if (!ME) { showScreenAuth(); return; }
-  // Fire-and-close so the sidebar collapses cleanly onto the race tab (see startSolo).
-  bg("weeklyRace", { token: TOKEN, newTab: true });
-  window.close();
+  // Close only once the race actually started (see startSolo).
+  const r = await bg("weeklyRace", { token: TOKEN, newTab: true });
+  if (r && r.ok) window.close();
+  else hint((r && r.error) || "Couldn't start this week's puzzle.", "err");
 }
 
 async function toggleWeeklyBoard() {

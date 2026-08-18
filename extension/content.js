@@ -4,12 +4,27 @@
 // the backend (which validates the hop), renders the race HUD, and applies the
 // in-page anti-cheat (kill Ctrl+F + the search box during a race).
 
-function currentTitle() {
-  const m = location.pathname.match(/^\/wiki\/(.+)$/);
+function titleFromWikiPath(pathname) {
+  const m = (pathname || "").match(/^\/wiki\/(.+)$/);
   if (!m) return null;
   let t = decodeURIComponent(m[1].split("#")[0]);
   t = t.replace(/_/g, " ").trim();
   return t ? t[0].toUpperCase() + t.slice(1) : null;
+}
+
+function currentTitle() {
+  // Prefer the canonical title: landing on a redirect keeps the clicked title
+  // in the address bar (/wiki/Digital_computer renders Computer), so the URL
+  // alone misreports the page - e.g. the race never finishes on a redirect
+  // that resolves to the target.
+  try {
+    const canon = document.querySelector('link[rel="canonical"]');
+    if (canon && canon.href) {
+      const t = titleFromWikiPath(new URL(canon.href).pathname);
+      if (t) return t;
+    }
+  } catch (_) {}
+  return titleFromWikiPath(location.pathname);
 }
 
 // How this page was reached (Performance Navigation Timing): "navigate" | "reload"
@@ -80,7 +95,7 @@ let debugMode = false;
 
 function anchorReject(a) {
   if (!a) return "no-anchor";
-  if (!a.closest(".mw-parser-output")) return "outside-.mw-parser-output";
+  if (!a.closest("#mw-content-text .mw-parser-output")) return "outside-.mw-parser-output";
   const skip = a.closest(RWR_SKIP_SEL);
   if (skip) {
     const cls = (skip.className && skip.className.baseVal !== undefined)
@@ -95,7 +110,7 @@ function anchorReject(a) {
 // `anchors`, the skip rules are eating links the player can plainly see and
 // click - which is exactly how a legal hop ends up unverifiable.
 function linkScrapeStats() {
-  const root = document.querySelector(".mw-parser-output");
+  const root = articleRoot();
   const stats = {
     parser_output: !!root, anchors: 0, collected: 0,
     skipped_region: 0, non_article: 0,
@@ -112,8 +127,16 @@ function linkScrapeStats() {
 
 // Read the article's real link set straight from the live DOM, so the backend
 // can build its graph + spot "missed win" pages without ever calling Wikipedia.
+// The article body wrapper. Must be scoped under #mw-content-text: protected
+// articles put the padlock indicator's own tiny .mw-parser-output first in the
+// DOM, and scraping that instead of the article reports a 1-link page.
+function articleRoot() {
+  return document.querySelector("#mw-content-text .mw-parser-output") ||
+         document.querySelector(".mw-parser-output");
+}
+
 function collectLinks() {
-  const root = document.querySelector(".mw-parser-output");
+  const root = articleRoot();
   if (!root) return [];
   const out = [];
   const seen = new Set();
@@ -123,6 +146,36 @@ function collectLinks() {
     if (t && !seen.has(t)) { seen.add(t); out.push(t); }
   });
   return out;
+}
+
+// document_idle can fire while a long article is still parsing (readyState
+// "interactive" with only a handful of anchors in the DOM), and a link set
+// scraped that early under-reports the page - the server then judges the next
+// hop against a near-empty observation, which both false-flags legal clicks and
+// leaves pages "unverified" (letting real cheats through). So the visit report
+// waits for the document to finish loading, with a backstop so a hung
+// subresource can't stall the race.
+function whenDocComplete(maxWaitMs) {
+  return new Promise((resolve) => {
+    if (document.readyState === "complete") return resolve();
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    window.addEventListener("load", finish, { once: true });
+    setTimeout(finish, maxWaitMs || 4000);
+  });
+}
+
+// Links rendered after the first scrape (late parses, lazy sections) get topped
+// up with a links-only re-report: the server treats a same-page visit as a
+// no-op hop but still records the fuller observation.
+let lastLinksSent = 0;
+async function topUpLinks(title) {
+  if (!raceActive || currentTitle() !== title) return;
+  const links = collectLinks();
+  if (links.length > lastLinksSent) {
+    lastLinksSent = links.length;
+    await send("visit", { title, links });
+  }
 }
 
 // One-shot read of the link the player last clicked (set by the capture-phase
@@ -888,6 +941,14 @@ function updateHud(race, reveal) {
 }
 
 async function init() {
+  // Chrome may prerender a linked article before the player actually navigates
+  // to it. A visit report from a prerendered document is silently dropped (the
+  // extension messaging isn't available there), losing the hop - and the
+  // recovery reload then looks like a click-less jump. Wait for activation.
+  if (document.prerendering) {
+    await new Promise((resolve) =>
+      document.addEventListener("prerenderingchange", resolve, { once: true }));
+  }
   // Mark the page so our CSS can hide Wikipedia's fundraising/donation banners
   // (works even for the CentralNotice banners injected asynchronously).
   document.documentElement.classList.add("rwr-on");
@@ -987,7 +1048,9 @@ async function init() {
   if (title && !race.finished) {
     const via = readVia();
     const nav = navType();
+    await whenDocComplete();
     const links = collectLinks();
+    lastLinksSent = links.length;
     const scrape = debugMode ? linkScrapeStats() : null;
     const client = debugMode ? {
       url: location.href.slice(0, 300),
@@ -1028,6 +1091,10 @@ async function init() {
       console.groupEnd();
     }
     updateHud(resp.ok ? resp.race : race, true);
+    // The page can keep growing after `load`; re-report so the observation the
+    // next hop is judged against reflects everything the player can click.
+    setTimeout(() => topUpLinks(title), 1500);
+    setTimeout(() => topUpLinks(title), 5000);
     if (resp.ok && resp.race && resp.race.path && resp.race.path.length >= 2) {
       const last = resp.race.path[resp.race.path.length - 1];
       if (resp.race.flagged && last === title && resp.race.legal === false) {

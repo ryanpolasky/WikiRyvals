@@ -24,6 +24,8 @@ from pathlib import Path
 
 import asyncio
 
+import requests
+
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -399,7 +401,7 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
                       via: str | None, via_from: str | None,
                       via_anchor: str, via_prev: set[str], via_ok: bool,
                       missed_step: bool, is_back_forward: bool,
-                      legal: bool, links: list[str]) -> dict:
+                      is_reload: bool, legal: bool, links: list[str]) -> dict:
     """Explain one hop verdict in full.
 
     When a clean run gets flagged the cause is almost always a mismatch between
@@ -418,13 +420,19 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
         reason = "ILLEGAL: browser back/forward is never a legal move"
     elif not verified:
         reason = f"ACCEPTED unverified: no link observation recorded for {prev_page!r}"
-    elif title in prev_set:
-        reason = f"ACCEPTED: landing title is a link on {prev_page!r}"
+    elif via is not None and title in prev_set:
+        reason = f"ACCEPTED: landing title is a link on {prev_page!r} and a click was reported"
     elif via_ok:
         reason = f"ACCEPTED: clicked link {via!r} is a link on {via_anchor!r}"
     elif missed_step:
         reason = (f"ACCEPTED: clicked from {via_from!r}, a page we never observed "
                   f"(dropped visit report - no honest basis to accuse this hop)")
+    elif is_reload:
+        reason = ("ACCEPTED: reload landing on a new page - the real hop's visit "
+                  "report was lost, refresh is the recovery, not the move")
+    elif via is None and title in prev_set:
+        reason = (f"ILLEGAL: {title!r} is a link on {prev_page!r} but no click was "
+                  "reported (URL bar / search jump to a linked article)")
     else:
         reason = (f"ILLEGAL: {title!r} is not among the {len(prev_set)} links seen on "
                   f"{prev_page!r}, and clicked link {via!r} is not among the "
@@ -456,6 +464,7 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
             "via_ok": via_ok,
             "missed_step": missed_step,
             "nav_back_forward": is_back_forward,
+            "nav_reload": is_reload,
         },
     }
     if not legal:
@@ -473,6 +482,117 @@ def _debug_hop_record(race: ExtRace, req: ExtVisitRequest, *, title: str,
     if req.client:
         rec["client"] = req.client
     return rec
+
+
+# ---- live Wikipedia hop verification (competitive races) -------------------
+#
+# Solo races trust the content script's link reports outright: nothing rides on
+# them, and live observations never false-flag legal clicks. Competitive races
+# (ranked matches, daily, weekly) feed leaderboards, so a hand-crafted /visit
+# with forged `links` must not be able to launder an arbitrary jump. For those,
+# each accepted hop is cross-checked against Wikipedia itself via the MediaWiki
+# API. The check is deliberately one-sided: a definitive "that page does not
+# link there" flags the hop, while an API error/timeout accepts it (never
+# punish a player for our connectivity).
+
+WIKI_API_URL = "https://en.wikipedia.org/w/api.php"
+_WIKI_API_UA = "WikiRyvals/1.0 (anti-cheat hop verification)"
+_WIKI_API_TIMEOUT = 2.5
+_wiki_check_cache: dict[tuple, bool] = {}
+_WIKI_CHECK_CACHE_MAX = 20000
+
+
+def _wiki_api(params: dict) -> dict | None:
+    try:
+        r = requests.get(WIKI_API_URL, params={"format": "json", **params},
+                         headers={"User-Agent": _WIKI_API_UA},
+                         timeout=_WIKI_API_TIMEOUT)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
+
+def _cache_put(key: tuple, value: bool) -> bool:
+    if len(_wiki_check_cache) >= _WIKI_CHECK_CACHE_MAX:
+        _wiki_check_cache.clear()
+    _wiki_check_cache[key] = value
+    return value
+
+
+def _wiki_links_present(page: str, candidates: list[str]) -> set[str] | None:
+    """Which of `candidates` are article links on `page`, per live Wikipedia.
+    Returns None when the API can't answer (treat as unknown, not innocent or
+    guilty). Single request via pltitles - no pagination needed."""
+    cands = sorted({c for c in candidates if c})
+    if not cands:
+        return set()
+    present: set[str] = set()
+    missing: list[str] = []
+    for c in cands:
+        hit = _wiki_check_cache.get(("link", page, c))
+        if hit is True:
+            present.add(c)
+        elif hit is None:
+            missing.append(c)
+    if not missing:
+        return present
+    data = _wiki_api({"action": "query", "titles": page, "prop": "links",
+                      "pltitles": "|".join(missing), "plnamespace": 0,
+                      "redirects": 1})
+    if data is None:
+        return None
+    found: set[str] = set()
+    for p in (data.get("query", {}).get("pages", {}) or {}).values():
+        for link in p.get("links", ()) or ():
+            t = normalize_title(link.get("title", ""))
+            if t:
+                found.add(t)
+    for c in missing:
+        ok = c in found
+        _cache_put(("link", page, c), ok)
+        if ok:
+            present.add(c)
+    return present
+
+
+def _wiki_resolves_to(link: str, title: str) -> bool | None:
+    """Does clicking `link` land on `title` (identical or via redirect)?"""
+    if link == title:
+        return True
+    hit = _wiki_check_cache.get(("redirect", link, title))
+    if hit is not None:
+        return hit
+    data = _wiki_api({"action": "query", "titles": link, "redirects": 1})
+    if data is None:
+        return None
+    for p in (data.get("query", {}).get("pages", {}) or {}).values():
+        if normalize_title(p.get("title", "")) == title:
+            return _cache_put(("redirect", link, title), True)
+    return _cache_put(("redirect", link, title), False)
+
+
+def _verify_hop_against_wikipedia(prev_page: str, title: str, via: str | None,
+                                  via_anchor: str) -> bool | None:
+    """Authoritative check that the hop could have been a real link click:
+    the page the player left (or the page they clicked from) must link to the
+    landing title, or to the clicked link which must redirect to the landing
+    title. True = confirmed, False = definitively impossible, None = unknown."""
+    pages = {prev_page, via_anchor}
+    unknown = False
+    for page in pages:
+        present = _wiki_links_present(page, [title, via] if via else [title])
+        if present is None:
+            unknown = True
+            continue
+        if title in present:
+            return True
+        if via and via in present:
+            r = _wiki_resolves_to(via, title)
+            if r is not False:
+                return True if r else None
+    return None if unknown else False
 
 
 @app.post("/api/ext/visit")
@@ -556,10 +676,27 @@ def ext_visit(req: ExtVisitRequest) -> dict:
     missed_step = (via_from is not None and via_from != race.current
                    and via_from not in race.links_seen)
     is_back_forward = (req.nav or "").strip().lower() == "back_forward"
+    # A reload that lands on a *different* page than the server's current one
+    # means the real hop's visit report never arrived (e.g. Chrome prerender
+    # swallowed it) and the player refreshed to recover. The reload carries no
+    # `via`, so without leniency a legitimately played run gets flagged.
+    is_reload = (req.nav or "").strip().lower() == "reload"
+    # A hop is only legal with evidence of an actual click (`via`): the URL bar
+    # and search box set no `via`, so even a jump whose destination happens to
+    # be linked from the current page gets flagged - matching the back/forward
+    # rule, whose destinations are also usually legitimately linked.
     if is_back_forward:
         legal = False
     else:
-        legal = (not verified) or (title in prev_set) or via_ok or missed_step
+        legal = (not verified) or (via is not None and title in prev_set) \
+            or via_ok or missed_step or is_reload
+    # Competitive races can't take the client's word for it: cross-check every
+    # accepted hop against live Wikipedia, so forged /visit payloads (fake
+    # `links`, fake `via`, or withheld observations) can't launder a jump.
+    competitive = bool(race.bound_match_id or race.daily_user or race.weekly_user)
+    if legal and competitive:
+        if _verify_hop_against_wikipedia(prev_page, title, via, via_anchor) is False:
+            legal = False
     race.path.append(title)
     race.current = title
     if not legal:
@@ -569,7 +706,8 @@ def ext_visit(req: ExtVisitRequest) -> dict:
             race, req, title=title, prev_page=prev_page, verified=verified,
             prev_set=prev_set, via=via, via_from=via_from, via_anchor=via_anchor,
             via_prev=via_prev, via_ok=via_ok, missed_step=missed_step,
-            is_back_forward=is_back_forward, legal=legal, links=links)
+            is_back_forward=is_back_forward, is_reload=is_reload,
+            legal=legal, links=links)
         race.debug_log.append(rec)
         del race.debug_log[:-DEBUG_LOG_LIMIT]
         ac_log.info("[%s] hop %d %s -> %s | %s", race.race_id[:8], rec["seq"],
